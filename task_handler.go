@@ -151,21 +151,33 @@ func (t *TaskService) Use(middlewares ...Middleware) {
 // HandleTask processes a CloudEvent with all registered middleware
 // HandleTask processes a CloudEvent with all registered middleware
 func (t *TaskService) HandleTask(ctx context.Context, ce *cloudevents.Event) error {
-	handlerInfo, ok := t.handlersMap[ce.Type()]
-	if !ok {
-		return fmt.Errorf("no handler registered for task type: %s", ce.Type())
+	// Create the base handler that processes the task
+	baseHandler := HandlerFunc(func(ctx context.Context, ce *cloudevents.Event) error {
+		handlerInfo, ok := t.handlersMap[ce.Type()]
+		if !ok {
+			return fmt.Errorf("no handler registered for task type: %s", ce.Type())
+		}
+
+		taskUnit := handlerInfo.taskUnitFactory.MakeUnit(ce)
+		if err := taskUnit.UnmarshalJob(); err != nil {
+			return oops.Wrapf(err, "failed to unmarshal job")
+		}
+
+		if err := taskUnit.ProcessTask(ctx); err != nil {
+			return oops.Wrapf(err, "failed to process task")
+		}
+
+		return nil
+	})
+
+	// Chain all middleware in reverse order
+	var handler HandlerFunc = baseHandler
+	for i := len(t.middlewares) - 1; i >= 0; i-- {
+		handler = t.middlewares[i](handler)
 	}
 
-	taskUnit := handlerInfo.taskUnitFactory.MakeUnit(ce)
-	if err := taskUnit.UnmarshalJob(); err != nil {
-		return oops.Wrapf(err, "failed to unmarshal job")
-	}
-
-	if err := taskUnit.ProcessTask(ctx); err != nil {
-		return oops.Wrapf(err, "failed to process task")
-	}
-
-	return nil
+	// Execute the handler chain
+	return handler(ctx, ce)
 }
 
 func chain(middlewares []func(Handler) Handler, handler Handler) Handler {
