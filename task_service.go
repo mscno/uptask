@@ -15,6 +15,12 @@ type TaskService struct {
 	handlersMap map[string]handlerInfo // task kind -> handler info
 }
 
+type Handler interface {
+	HandleEvent(context.Context, *cloudevents.Event) error
+}
+
+type HandlerFunc func(context.Context, *cloudevents.Event) error
+
 // handlerInfo bundles information about a registered task handler for later lookup
 // in a TaskService bundle.
 type handlerInfo struct {

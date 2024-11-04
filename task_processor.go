@@ -2,10 +2,10 @@ package uptask
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/mscno/uptask/events"
 )
 
 // TaskHandler is an interface that can perform a task with args of type T. A typical
@@ -112,12 +112,6 @@ func AddTaskHandlerSafely[T TaskArgs](service *TaskService, handler TaskHandler[
 	return service.add(taskArgs, &taskUnitFactoryWrapper[T]{tasker: handler})
 }
 
-type Handler interface {
-	HandleEvent(context.Context, *cloudevents.Event) error
-}
-
-type HandlerFunc func(context.Context, *cloudevents.Event) error
-
 type Tasker[T TaskArgs] interface {
 	Timeout(task *Task[T]) time.Duration
 	ProcessTask(ctx context.Context, job *Task[T]) error
@@ -189,5 +183,5 @@ func (w *wrapperTaskUnit[T]) UnmarshalJob() error {
 		//UserID: w.userId,
 	}
 
-	return json.Unmarshal(w.ce.Data(), &w.task.Args)
+	return events.Deserialize(w.ce, &w.task.Args)
 }
