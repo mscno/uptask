@@ -3,13 +3,9 @@ package uptask
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"sync"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"github.com/samber/do"
-	"github.com/samber/oops"
 )
 
 // TaskHandler is an interface that can perform a task with args of type T. A typical
@@ -122,116 +118,6 @@ type Handler interface {
 
 type HandlerFunc func(context.Context, *cloudevents.Event) error
 
-// Middleware defines a function that wraps a HandlerFunc
-type Middleware func(HandlerFunc) HandlerFunc
-
-func (f HandlerFunc) HandleEvent(ctx context.Context, event *cloudevents.Event) error {
-	return f(ctx, event)
-}
-
-type HandlerMiddlewareFunc func(handler Handler) Handler
-
-// TaskService is a list of available task handlers. A TaskHandler must be registered for
-// each type of Task to be handled.
-//
-// Use the top-level AddTaskHandler function combined with a TaskService to register a
-// task handler.
-type TaskService struct {
-	mux         sync.Mutex
-	middlewares []Middleware
-	handlersMap map[string]handlerInfo // task kind -> handler info
-}
-
-func (t *TaskService) Use(middlewares ...Middleware) {
-	t.mux.Lock()
-	defer t.mux.Unlock()
-	t.middlewares = append(t.middlewares, middlewares...)
-}
-
-// HandleTask processes a CloudEvent with all registered middleware
-// HandleTask processes a CloudEvent with all registered middleware
-func (t *TaskService) HandleTask(ctx context.Context, ce *cloudevents.Event) error {
-	// Create the base handler that processes the task
-	baseHandler := HandlerFunc(func(ctx context.Context, ce *cloudevents.Event) error {
-		handlerInfo, ok := t.handlersMap[ce.Type()]
-		if !ok {
-			return fmt.Errorf("no handler registered for task type: %s", ce.Type())
-		}
-
-		taskUnit := handlerInfo.taskUnitFactory.MakeUnit(ce)
-		if err := taskUnit.UnmarshalJob(); err != nil {
-			return oops.Wrapf(err, "failed to unmarshal job")
-		}
-
-		if err := taskUnit.ProcessTask(ctx); err != nil {
-			return oops.Wrapf(err, "failed to process task")
-		}
-
-		return nil
-	})
-
-	// Chain all middleware in reverse order
-	var handler HandlerFunc = baseHandler
-	for i := len(t.middlewares) - 1; i >= 0; i-- {
-		handler = t.middlewares[i](handler)
-	}
-
-	// Execute the handler chain
-	return handler(ctx, ce)
-}
-
-func chain(middlewares []func(Handler) Handler, handler Handler) Handler {
-	for i := range middlewares {
-		handler = middlewares[len(middlewares)-1-i](handler)
-	}
-	return handler
-}
-
-// handlerInfo bundles information about a registered task handler for later lookup
-// in a TaskService bundle.
-type handlerInfo struct {
-	taskArgs        TaskArgs
-	taskUnitFactory TaskUnitFactory
-}
-
-func DoTaskService(in *do.Injector) (*TaskService, error) {
-	return NewTaskService(), nil
-}
-
-// NewTaskService initializes a new registry of available task handlers.
-//
-// Use the top-level AddTaskHandler function combined with a TaskService registry to
-// register each available task handler.
-func NewTaskService() *TaskService {
-	return &TaskService{
-		handlersMap: make(map[string]handlerInfo),
-		middlewares: make([]Middleware, 0),
-	}
-}
-
-func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory TaskUnitFactory) error {
-	kind := taskArgs.Kind()
-	w.mux.Lock()
-	defer w.mux.Unlock()
-	if _, ok := w.handlersMap[kind]; ok {
-		return fmt.Errorf("handler for kind %q is already registered", kind)
-	}
-
-	if taskArgs.Kind() == "" {
-		panic("taskKind cannot be empty")
-	}
-	if taskUnitFactory == nil {
-		panic("handler cannot be nil")
-	}
-
-	w.handlersMap[kind] = handlerInfo{
-		taskArgs:        taskArgs,
-		taskUnitFactory: taskUnitFactory,
-	}
-
-	return nil
-}
-
 type Tasker[T TaskArgs] interface {
 	Timeout(task *Task[T]) time.Duration
 	ProcessTask(ctx context.Context, job *Task[T]) error
@@ -298,6 +184,8 @@ func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T],
 
 func (w *wrapperTaskUnit[T]) UnmarshalJob() error {
 	w.task = &Task[T]{
+		Id:        w.ce.ID(),
+		Timestamp: w.ce.Time(),
 		//UserID: w.userId,
 	}
 

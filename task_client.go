@@ -7,7 +7,6 @@ import (
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/mscno/uptask/events"
-	"github.com/samber/do"
 	"github.com/samber/oops"
 	"github.com/upstash/qstash-go"
 )
@@ -26,28 +25,24 @@ type Transport interface {
 	Send(ctx context.Context, event cloudevents.Event) error
 }
 
-func DoTaskClient(in *do.Injector) (*TaskClient, error) {
-	return NewTaskClient(do.MustInvoke[Transport](in)), nil
-}
-
 func NewTaskClient(transport Transport) *TaskClient {
 	return &TaskClient{
 		transport: transport,
 	}
 }
 
-func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs) error {
+func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs) (string, error) {
 	ce, err := events.Serialize(ctx, args)
 	if err != nil {
-		return oops.Wrap(err)
+		return "", oops.Wrap(err)
 	}
 	slog.Info("enqueueing task", "task", ce.Type())
 
 	err = c.transport.Send(ctx, ce)
 	if err != nil {
-		return oops.Wrap(err)
+		return "", oops.Wrap(err)
 	}
-	return nil
+	return ce.ID(), nil
 }
 
 /*

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os/exec"
 	"regexp"
@@ -12,7 +13,6 @@ import (
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,51 +49,62 @@ func TestTaskHandler(t *testing.T) {
 	ce.SetID(uuid.NewString())
 	ce.SetSource("defensedata")
 	ce.SetData("application/json", dummyTask)
-
-	unit := tsvc.handlersMap["DummyTask"].taskUnitFactory.MakeUnit(&ce)
-	err := unit.UnmarshalJob()
-	require.NoError(t, err)
-	err = unit.ProcessTask(context.Background())
+	ctx := context.Background()
+	err := tsvc.handlersMap["DummyTask"].handler.HandleEvent(ctx, &ce)
 	require.NoError(t, err)
 }
 
 func TestTaskClient(t *testing.T) {
 
 	var hit bool
-	e := echo.New()
-	e.POST(TaskRoute, func(c echo.Context) error {
+	handler := http.NewServeMux()
+	handler.Handle("POST "+TaskRoute, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
-		return c.String(200, "OK")
-	})
-	srv := httptest.NewServer(e)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	srv := httptest.NewServer(handler)
 
 	tsvc := NewTaskClient(NewHttpTransport(srv.URL))
-	err := tsvc.StartTask(context.Background(), DummyTask{Name: "test"})
+	id, err := tsvc.StartTask(context.Background(), DummyTask{Name: "test"})
 	require.NoError(t, err)
 	require.True(t, hit)
+	_, err = uuid.Parse(id)
+	require.NoError(t, err)
 }
 
 func TestTaskHandlerAndClient(t *testing.T) {
 
-	e := echo.New()
 	tsvc := NewTaskService()
-	e.POST(TaskRoute, func(c echo.Context) error {
-		ce, err := cloudevents.NewEventFromHTTPRequest(c.Request())
+
+	handler := http.NewServeMux()
+	handler.Handle("POST "+TaskRoute, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ce, err := cloudevents.NewEventFromHTTPRequest(r)
 		if err != nil {
-			return err
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
-		return tsvc.HandleTask(c.Request().Context(), ce)
-	})
-	srv := httptest.NewServer(e)
+		err = tsvc.HandleEvent(r.Context(), ce)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	srv := httptest.NewServer(handler)
 	worker := &DummyTaskProcessor{}
 	AddTaskHandler(tsvc, worker)
 
 	tsvcClient := NewTaskClient(NewHttpTransport(srv.URL))
 
 	dummyTask := DummyTask{Name: "test"}
-	err := tsvcClient.StartTask(context.Background(), dummyTask)
+	id, err := tsvcClient.StartTask(context.Background(), dummyTask)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(worker.Tasks))
+	require.NotEmpty(t, id)
+	_, err = uuid.Parse(id)
+	require.NoError(t, err)
 }
 
 func TestLocalTunnelStreamingOutput(t *testing.T) {

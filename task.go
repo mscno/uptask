@@ -9,6 +9,7 @@ type TaskArgs interface {
 }
 
 type Task[T any] struct {
+	Id        string
 	Timestamp time.Time
 	Args      T
 }
