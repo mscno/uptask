@@ -9,7 +9,7 @@ import (
 // Middleware defines a function that wraps a HandlerFunc
 type Middleware func(HandlerFunc) HandlerFunc
 
-func (f HandlerFunc) HandleEvent(ctx context.Context, event *cloudevents.Event) error {
+func (f HandlerFunc) HandleEvent(ctx context.Context, event cloudevents.Event) error {
 	return f(ctx, event)
 }
 

@@ -15,7 +15,7 @@ import (
 //
 // Implemented by river.wrapperTaskUnit.
 type TaskUnit interface {
-	UnmarshalJob() error
+	UnmarshalTask() error
 	Timeout() time.Duration
 	ProcessTask(ctx context.Context) error
 }
@@ -28,5 +28,5 @@ type TaskUnit interface {
 type TaskUnitFactory interface {
 	// Make a workUnit, which wraps a job to be done and work function that can
 	// execute it.
-	MakeUnit(ce *cloudevents.Event) TaskUnit
+	MakeUnit(ce cloudevents.Event) TaskUnit
 }

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"github.com/mscno/uptask/events"
 )
 
 // TaskHandler is an interface that can perform a task with args of type T. A typical
@@ -150,13 +149,13 @@ type taskUnitFactoryWrapper[T TaskArgs] struct {
 	tasker Tasker[T]
 }
 
-func (w *taskUnitFactoryWrapper[T]) MakeUnit(ce *cloudevents.Event) TaskUnit {
+func (w *taskUnitFactoryWrapper[T]) MakeUnit(ce cloudevents.Event) TaskUnit {
 	return &wrapperTaskUnit[T]{ce: ce, tasker: w.tasker}
 }
 
 // wrapperTaskUnit implements TaskUnit for a task and Worker.
 type wrapperTaskUnit[T TaskArgs] struct {
-	ce     *cloudevents.Event
+	ce     cloudevents.Event
 	task   *Task[T] // not set until after UnmarshalJob is invoked
 	tasker Tasker[T]
 }
@@ -164,6 +163,10 @@ type wrapperTaskUnit[T TaskArgs] struct {
 func (w *wrapperTaskUnit[T]) Timeout() time.Duration { return w.tasker.Timeout(w.task) }
 func (w *wrapperTaskUnit[T]) ProcessTask(ctx context.Context) error {
 	return executeWithTimeout(ctx, w.tasker, w.task)
+}
+
+func (w *wrapperTaskUnit[T]) ExtractJob() *Task[T] {
+	return w.task
 }
 
 func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T], task *Task[T]) error {
@@ -176,12 +179,8 @@ func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T],
 	return handler.ProcessTask(ctx, task)
 }
 
-func (w *wrapperTaskUnit[T]) UnmarshalJob() error {
-	w.task = &Task[T]{
-		Id:        w.ce.ID(),
-		Timestamp: w.ce.Time(),
-		//UserID: w.userId,
-	}
-
-	return events.Deserialize(w.ce, &w.task.Args)
+func (w *wrapperTaskUnit[T]) UnmarshalTask() error {
+	var err error
+	w.task, err = UnmarshalTask[T](w.ce)
+	return err
 }

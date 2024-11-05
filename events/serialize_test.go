@@ -47,7 +47,7 @@ func TestSerializeDeserializeRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	var args dummyArgs
-	err = events.Deserialize(&event, &args)
+	err = events.Deserialize(event, &args)
 	require.NoError(t, err)
 	require.Equal(t, fixtureArgs(), args)
 }
