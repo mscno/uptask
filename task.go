@@ -22,6 +22,14 @@ type Task[T any] struct {
 	Args      T
 }
 
+type AnyTask struct {
+	Id        string
+	CreatedAt time.Time
+	Attempt   int
+	Retried   int
+	Args      interface{}
+}
+
 func UnmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
 	var task = Task[T]{
 		Id:        ce.ID(),

@@ -2,6 +2,7 @@ package uptask
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
@@ -179,8 +180,17 @@ func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T],
 	return handler.ProcessTask(ctx, task)
 }
 
-func (w *wrapperTaskUnit[T]) UnmarshalTask() error {
-	var err error
+func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) {
+	var insertOpts TaskInsertOpts
+	err := insertOpts.FromCloudEvent(w.ce)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to extract task insert options: %w", err)
+	}
+
 	w.task, err = UnmarshalTask[T](w.ce)
-	return err
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal task: %w", err)
+	}
+
+	return &AnyTask{Id: w.task.Id, CreatedAt: w.task.CreatedAt, Attempt: w.task.Attempt, Retried: w.task.Retried, Args: w.task.Args}, &insertOpts, nil
 }

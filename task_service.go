@@ -2,12 +2,11 @@ package uptask
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"github.com/samber/oops"
+	"log/slog"
+	"os"
 	"sync"
-	"time"
 )
 
 type Handler interface {
@@ -16,11 +15,20 @@ type Handler interface {
 
 type HandlerFunc func(context.Context, cloudevents.Event) error
 
+type Logger interface {
+	Debug(string, ...any)
+	Warn(string, ...any)
+	Info(string, ...any)
+	Error(string, ...any)
+}
+
 type TaskService struct {
-	client      *TaskClient
-	mux         sync.Mutex
-	middlewares []Middleware
-	handlersMap map[string]handlerInfo // task kind -> handler info
+	client        *TaskClient
+	log           Logger
+	mux           sync.Mutex
+	handlersAdded bool
+	middlewares   []Middleware
+	handlersMap   map[string]handlerInfo // task kind -> handler info
 }
 
 // NewTaskService initializes a new registry of available task handlers.
@@ -28,8 +36,9 @@ type TaskService struct {
 // Use the top-level AddTaskHandler function combined with a TaskService registry to
 // register each available task handler.
 func NewTaskService(client *TaskClient) *TaskService {
-
+	l := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	return &TaskService{
+		log:         l,
 		client:      client,
 		handlersMap: make(map[string]handlerInfo),
 		middlewares: make([]Middleware, 0),
@@ -62,32 +71,22 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory TaskUnitFactory) er
 	// Create the base handler for this task type
 	baseHandler := func(ctx context.Context, ce cloudevents.Event) error {
 		taskUnit := taskUnitFactory.MakeUnit(ce)
-		if err := taskUnit.UnmarshalTask(); err != nil {
-			return oops.Wrapf(err, "failed to unmarshal job")
-		}
-
-		err := taskUnit.ProcessTask(ctx)
-		var snoozeErr *jobSnoozeError
-		if errors.As(err, &snoozeErr) {
-			if snoozeErr.duration > 0 {
-				opts, err := insertInsertOptsFromEvent(ce)
-				if err != nil {
-					return oops.Wrapf(err, "failed to get insert options from event")
-				}
-				// Sleep for the snooze duration
-				// Requeue the task
-				fmt.Printf("Snoozing for %s\n", snoozeErr.duration)
-				opts.ScheduledAt = time.Now().Add(snoozeErr.duration)
-				return w.client.transport.Send(ctx, ce, opts)
-			}
-		}
-
+		anyTask, insertOpts, err := taskUnit.UnmarshalTask()
 		if err != nil {
-			return oops.Wrapf(err, "failed to process task")
+			return fmt.Errorf("failed to unmarshal task: %w", err)
+		}
+		w.log.Info("processing task", "kind", kind, "id", anyTask.Id, "attempt", anyTask.Attempt, "retried", anyTask.Retried, "args", anyTask.Args, "insertOpts", insertOpts)
+		err = taskUnit.ProcessTask(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to process task: %w", err)
 		}
 
 		return nil
 	}
+
+	// Apply snooze middleware to the base handler
+	snoozeMw := handleSnooze(w.client, w.log)
+	baseHandler = snoozeMw(baseHandler)
 
 	// Apply all middleware to the base handler
 	handler := baseHandler
@@ -100,12 +99,18 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory TaskUnitFactory) er
 		handler:  handler,
 	}
 
+	w.handlersAdded = true
+	w.log.Info("task handler registered", "kind", kind)
+
 	return nil
 }
 
 func (t *TaskService) Use(middlewares ...Middleware) {
 	t.mux.Lock()
 	defer t.mux.Unlock()
+	if t.handlersAdded {
+		panic("cannot add middleware after handlers are added")
+	}
 	t.middlewares = append(t.middlewares, middlewares...)
 }
 
@@ -117,10 +122,10 @@ func (t *TaskService) Use(middlewares ...Middleware) {
 
 // HandleEvent processes a CloudEvent with all registered middleware
 func (w *TaskService) HandleEvent(ctx context.Context, ce cloudevents.Event) error {
+	w.log.Debug("handling event", "type", ce.Type(), "source", ce.Source(), "id", ce.ID())
 	handlerInfo, ok := w.handlersMap[ce.Type()]
 	if !ok {
 		return fmt.Errorf("no handler registered for task type: %s", ce.Type())
 	}
-
 	return handlerInfo.handler(ctx, ce)
 }

@@ -15,7 +15,7 @@ import (
 //
 // Implemented by river.wrapperTaskUnit.
 type TaskUnit interface {
-	UnmarshalTask() error
+	UnmarshalTask() (*AnyTask, *TaskInsertOpts, error)
 	Timeout() time.Duration
 	ProcessTask(ctx context.Context) error
 }
