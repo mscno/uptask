@@ -80,12 +80,14 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 
 	err = c.transport.Send(ctx, ce, opts)
 	if err != nil {
-		go func() {
-			err := c.store.DeleteTaskExecution(context.Background(), ce.ID())
-			if err != nil {
-				c.log.Error("failed to cleanup and delete task", "task", ce.ID(), "error", err)
-			}
-		}()
+		if c.storeEnabled {
+			go func() {
+				err := c.store.DeleteTaskExecution(context.Background(), ce.ID())
+				if err != nil {
+					c.log.Error("failed to cleanup and delete task", "task", ce.ID(), "error", err)
+				}
+			}()
+		}
 		return "", fmt.Errorf("failed to send task: %v", err)
 	}
 	return ce.ID(), nil
