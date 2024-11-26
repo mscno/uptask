@@ -112,7 +112,7 @@ func AddTaskHandlerSafely[T TaskArgs](service *TaskService, handler TaskHandler[
 	return service.add(taskArgs, &taskUnitFactoryWrapper[T]{tasker: handler})
 }
 
-type Tasker[T TaskArgs] interface {
+type tasker[T TaskArgs] interface {
 	Timeout(task *Task[T]) time.Duration
 	ProcessTask(ctx context.Context, job *Task[T]) error
 }
@@ -147,18 +147,18 @@ func ProcessTaskFunc[T TaskArgs](f func(context.Context, *Task[T]) error) TaskHa
 
 // workUnitFactoryWrapper wraps a Worker to implement workUnitFactory.
 type taskUnitFactoryWrapper[T TaskArgs] struct {
-	tasker Tasker[T]
+	tasker tasker[T]
 }
 
-func (w *taskUnitFactoryWrapper[T]) MakeUnit(ce cloudevents.Event) TaskUnit {
+func (w *taskUnitFactoryWrapper[T]) MakeUnit(ce cloudevents.Event) taskUnit {
 	return &wrapperTaskUnit[T]{ce: ce, tasker: w.tasker}
 }
 
-// wrapperTaskUnit implements TaskUnit for a task and Worker.
+// wrapperTaskUnit implements taskUnit for a task and Worker.
 type wrapperTaskUnit[T TaskArgs] struct {
 	ce     cloudevents.Event
 	task   *Task[T] // not set until after UnmarshalJob is invoked
-	tasker Tasker[T]
+	tasker tasker[T]
 }
 
 func (w *wrapperTaskUnit[T]) Timeout() time.Duration { return w.tasker.Timeout(w.task) }
@@ -187,10 +187,19 @@ func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) 
 		return nil, nil, fmt.Errorf("failed to extract task insert options: %w", err)
 	}
 
-	w.task, err = UnmarshalTask[T](w.ce)
+	w.task, err = unmarshalTask[T](w.ce)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal task: %w", err)
 	}
 
-	return &AnyTask{Id: w.task.Id, CreatedAt: w.task.CreatedAt, Attempt: w.task.Attempt, Retried: w.task.Retried, Args: w.task.Args}, &insertOpts, nil
+	anytask := &AnyTask{
+		Id:        w.task.Id,
+		CreatedAt: w.task.CreatedAt,
+		Attempt:   w.task.Attempt,
+		Retried:   w.task.Retried,
+		Args:      w.task.Args,
+		Scheduled: w.task.Scheduled,
+	}
+
+	return anytask, &insertOpts, nil
 }

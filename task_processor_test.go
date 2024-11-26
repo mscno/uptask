@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/mscno/uptask/internal/events"
+	"github.com/mscno/uptask/internal/httputil"
 	"github.com/mscno/uptask/testutl"
 	"log/slog"
 	"net/http"
@@ -25,7 +27,7 @@ import (
 */
 
 func dummyTransport() Transport {
-	return TransportFn(func(ctx context.Context, ce cloudevents.Event, opts *TaskInsertOpts) error {
+	return transportFn(func(ctx context.Context, ce cloudevents.Event, opts *TaskInsertOpts) error {
 		slog.Info("dummy transport: printing task to console", "task", ce.Type())
 		return nil
 	})
@@ -92,7 +94,7 @@ func (svc *DummyTaskProcessor) ProcessTask(ctx context.Context, task *Task[Dummy
 
 func TestTaskHandler(t *testing.T) {
 
-	tsvc := NewTaskService(NewTaskClient(dummyTransport()))
+	tsvc := NewTaskService(dummyTransport())
 	AddTaskHandler(tsvc, &DummyTaskProcessor{})
 
 	dummyTask := DummyTask{Name: "test"}
@@ -100,7 +102,7 @@ func TestTaskHandler(t *testing.T) {
 	ce.SetID(uuid.NewString())
 	ce.SetSource("defensedata")
 	ce.SetData("application/json", dummyTask)
-	ce.SetExtension(taskRetriedExtension, "0")
+	ce.SetExtension(events.TaskRetriedExtension, "0")
 	ctx := context.Background()
 	err := tsvc.handlersMap["DummyTask"].handler.HandleEvent(ctx, ce)
 	require.NoError(t, err)
@@ -127,11 +129,11 @@ func TestTaskClient(t *testing.T) {
 
 func TestTaskHandlerAndClient(t *testing.T) {
 
-	tsvc := NewTaskService(NewTaskClient(dummyTransport()))
+	tsvc := NewTaskService(dummyTransport())
 
 	handler := http.NewServeMux()
 	handler.Handle("POST /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ce, err := NewEventFromHTTPRequest(r)
+		ce, err := httputil.NewEventFromHTTPRequest(r)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -217,8 +219,9 @@ func TestUpstashTransport(t *testing.T) {
 		fmt.Println("Killing local tunnel")
 		cmd.Process.Kill()
 	})
-	tclient := NewTaskClient(NewUpstashTransport(testutl.ReadTokenFromEnv(), tunnelUrl))
-	tsvc := NewTaskService(tclient)
+	transport := NewUpstashTransport(testutl.ReadTokenFromEnv(), tunnelUrl)
+	tclient := NewTaskClient(transport)
+	tsvc := NewTaskService(transport)
 
 	handler := http.NewServeMux()
 	handler.Handle("POST /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +232,7 @@ func TestUpstashTransport(t *testing.T) {
 		//	fmt.Printf("%s: %s\n", k, v)
 		//}
 		//fmt.Println("----------------")
-		ce, err := NewEventFromHTTPRequest(r)
+		ce, err := httputil.NewEventFromHTTPRequest(r)
 		if err != nil {
 			fmt.Println("Error: ", err)
 			w.WriteHeader(http.StatusBadRequest)

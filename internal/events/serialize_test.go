@@ -2,10 +2,10 @@ package events_test
 
 import (
 	"context"
+	"github.com/mscno/uptask/internal/events"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/mscno/uptask/events"
 	"github.com/stretchr/testify/require"
 )
 

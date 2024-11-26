@@ -3,6 +3,7 @@ package uptask
 import (
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/mscno/uptask/internal/events"
 	"strconv"
 	"time"
 )
@@ -44,14 +45,14 @@ func insertInsertOptsFromEvent(ce cloudevents.Event) (*TaskInsertOpts, error) {
 
 	// Parse all extensions using a single error variable
 	var err error
-	if err = parseExtension(taskQueueExtension, func(s string) error {
+	if err = parseExtension(events.TaskQueueExtension, func(s string) error {
 		opts.Queue = s
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("queue parsing error: %w", err)
 	}
 
-	if err = parseExtension(taskNotBeforeExtension, func(s string) error {
+	if err = parseExtension(events.TaskNotBeforeExtension, func(s string) error {
 		scheduledAt, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return fmt.Errorf("invalid scheduled time format: %w", err)
@@ -62,12 +63,15 @@ func insertInsertOptsFromEvent(ce cloudevents.Event) (*TaskInsertOpts, error) {
 		return nil, fmt.Errorf("scheduled time parsing error: %w", err)
 	}
 
-	if err = parseExtension(taskMaxRetriesExtension, func(s string) error {
+	if err = parseExtension(events.TaskMaxRetriesExtension, func(s string) error {
 		maxRetries, err := strconv.Atoi(s)
 		if err != nil {
 			return fmt.Errorf("invalid max retries format: %w", err)
 		}
 		opts.MaxRetries = maxRetries
+		if opts.MaxRetries == 0 {
+			opts.MaxRetries = 3
+		}
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("max retries parsing error: %w", err)

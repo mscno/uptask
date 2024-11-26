@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/cloudevents/sdk-go/v2"
+	"github.com/mscno/uptask/internal/events"
 	"github.com/samber/oops"
-	"github.com/upstash/qstash-go"
 	"log/slog"
 	"time"
 )
 
 type UpstashTransport struct {
-	*qstash.Client
 	qstashToken string
 	targetUrl   string
 }
@@ -21,7 +20,6 @@ const upstashQueueUrl = "https://qstash.upstash.io/v2/enqueue"
 
 func NewUpstashTransport(qstashToken, targetUrl string) *UpstashTransport {
 	return &UpstashTransport{
-		Client:      qstash.NewClient(qstashToken),
 		qstashToken: qstashToken,
 		targetUrl:   targetUrl,
 	}
@@ -40,7 +38,7 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 	if len(headers)%2 != 0 {
 		panic("headers must be key-value pairs")
 	}
-	return TransportFn(func(ctx context.Context, ce v2.Event, opts *TaskInsertOpts) error {
+	return transportFn(func(ctx context.Context, ce v2.Event, opts *TaskInsertOpts) error {
 		targetUrlWithPath := fmt.Sprintf("%s", targetUrl)
 		ctx = v2.ContextWithTarget(ctx, targetUrlWithPath)
 		ctx = v2.WithEncodingStructured(ctx)
@@ -52,7 +50,7 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 
 		if opts.MaxRetries >= 0 {
 			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Retries", fmt.Sprintf("%d", opts.MaxRetries)))
-			ce.SetExtension(taskMaxRetriesExtension, fmt.Sprintf("%d", opts.MaxRetries))
+			ce.SetExtension(events.TaskMaxRetriesExtension, fmt.Sprintf("%d", opts.MaxRetries))
 		}
 
 		if !opts.ScheduledAt.IsZero() {
@@ -60,7 +58,7 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 				return fmt.Errorf("scheduled time must be in the future")
 			}
 			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Not-Before", fmt.Sprintf("%d", opts.ScheduledAt.Unix())))
-			ce.SetExtension(taskNotBeforeExtension, fmt.Sprintf("%d", opts.ScheduledAt.Unix()))
+			ce.SetExtension(events.TaskNotBeforeExtension, fmt.Sprintf("%d", opts.ScheduledAt.Unix()))
 		}
 
 		p, err := v2.NewHTTP(

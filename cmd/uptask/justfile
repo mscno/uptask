@@ -1,0 +1,8 @@
+set dotenv-load
+
+install:
+    @echo "Installing qjobs"
+    @go build -o ${GOPATH}/bin/qjobs .
+
+qjobs cmd:
+    @go run . {{cmd}}

@@ -13,7 +13,7 @@ func (f HandlerFunc) HandleEvent(ctx context.Context, event cloudevents.Event) e
 	return f(ctx, event)
 }
 
-type HandlerMiddlewareFunc func(handler Handler) Handler
+type MiddlewareFunc func(handler Handler) Handler
 
 func applyMiddleware(middlewares []func(Handler) Handler, handler Handler) Handler {
 	for i := range middlewares {

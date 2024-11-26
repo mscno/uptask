@@ -1,8 +1,10 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/google/uuid"
@@ -12,6 +14,10 @@ import (
 
 type Kinder interface {
 	Kind() string
+}
+
+type Payloader interface {
+	Payload() any
 }
 
 func Serialize(ctx context.Context, args Kinder) (cloudevents.Event, error) {
@@ -35,8 +41,6 @@ func SerializeWithExt(ctx context.Context, args Kinder, extKvPairs ...string) (c
 		exts[extKvPairs[i]] = extKvPairs[i+1]
 	}
 
-	byteslice, err := json.Marshal(args)
-
 	e := event.New(event.CloudEventsVersionV1)
 	e.SetID(uuid.NewString())
 	e.SetType(args.Kind())
@@ -46,7 +50,20 @@ func SerializeWithExt(ctx context.Context, args Kinder, extKvPairs ...string) (c
 		e.SetExtension(k, v)
 	}
 
-	err = e.SetData(cloudevents.ApplicationCloudEventsJSON, byteslice)
+	var buffer bytes.Buffer
+	if p, ok := args.(Payloader); ok {
+		err := json.NewEncoder(&buffer).Encode(p.Payload())
+		if err != nil {
+			return cloudevents.Event{}, fmt.Errorf("failed to encode payload: %w", err)
+		}
+	} else {
+		err := json.NewEncoder(&buffer).Encode(args)
+		if err != nil {
+			return cloudevents.Event{}, fmt.Errorf("failed to encode payload: %w", err)
+		}
+	}
+
+	err := e.SetData(cloudevents.ApplicationCloudEventsJSON, buffer.Bytes())
 	if err != nil {
 		return cloudevents.Event{}, oops.In("taskserver").
 			Tags("SerializeWithExt", "failed to set data").

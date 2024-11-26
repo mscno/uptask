@@ -1,0 +1,9 @@
+qjobs:
+  - destination: "https://madssmacstudio.tail4cb2a6.ts.net/"
+    cron: "* * * * *"
+    content_type: "application/cloudevents+json"
+    kind: "DummyTask"
+    args:
+      name: "my super job"
+      my_arg: "my super arg"
+      my_int: 1

@@ -2,11 +2,13 @@ package uptask
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 )
 
 type Handler interface {
@@ -23,26 +25,52 @@ type Logger interface {
 }
 
 type TaskService struct {
-	client        *TaskClient
+	*TaskClient
+	transport     Transport
 	log           Logger
 	mux           sync.Mutex
 	handlersAdded bool
+	store         TaskStore
+	storeEnabled  bool
 	middlewares   []Middleware
 	handlersMap   map[string]handlerInfo // task kind -> handler info
+}
+
+type ServiceOption func(*TaskService)
+
+func WithLogger(l Logger) ServiceOption {
+	return func(t *TaskService) {
+		t.log = l
+	}
+}
+
+func WithStore(s TaskStore) ServiceOption {
+	return func(t *TaskService) {
+		t.store = s
+		t.storeEnabled = true
+	}
 }
 
 // NewTaskService initializes a new registry of available task handlers.
 //
 // Use the top-level AddTaskHandler function combined with a TaskService registry to
 // register each available task handler.
-func NewTaskService(client *TaskClient) *TaskService {
+func NewTaskService(transport Transport, opts ...ServiceOption) *TaskService {
 	l := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	return &TaskService{
+
+	svc := &TaskService{
 		log:         l,
-		client:      client,
+		TaskClient:  NewTaskClient(transport),
+		transport:   transport,
 		handlersMap: make(map[string]handlerInfo),
 		middlewares: make([]Middleware, 0),
 	}
+
+	for _, opt := range opts {
+		opt(svc)
+	}
+
+	return svc
 }
 
 // handlerInfo bundles information about a registered task handler for later lookup
@@ -52,7 +80,7 @@ type handlerInfo struct {
 	handler  HandlerFunc
 }
 
-func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory TaskUnitFactory) error {
+func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) error {
 	kind := taskArgs.Kind()
 	w.mux.Lock()
 	defer w.mux.Unlock()
@@ -75,17 +103,83 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory TaskUnitFactory) er
 		if err != nil {
 			return fmt.Errorf("failed to unmarshal task: %w", err)
 		}
+
+		if w.storeEnabled {
+			// Check if task is first attempt and scheduled
+			// If so, we need to create a new task execution
+			// and update the task status to running
+			if anyTask.Retried == 0 && anyTask.Scheduled {
+				err = w.store.CreateTaskExecution(ctx, &TaskExecution{
+					ID:              ce.ID(),
+					TaskKind:        ce.Type(),
+					Status:          TaskStatusPending,
+					Args:            anyTask.Args,
+					AttemptID:       "",
+					Attempt:         0,
+					MaxAttempts:     insertOpts.MaxRetries,
+					QstashMessageID: "",
+					ScheduleID:      "",
+					CreatedAt:       time.Now(),
+					AttemptedAt:     time.Time{},
+					ScheduledAt:     insertOpts.ScheduledAt,
+					FinalizedAt:     time.Time{},
+					Errors:          nil,
+					Queue:           insertOpts.Queue,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to create task execution: %w", err)
+				}
+			}
+
+			// Update task status to running
+			err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusRunning)
+			if err != nil {
+				return fmt.Errorf("failed to create task execution: %w", err)
+			}
+		}
+
 		w.log.Info("processing task", "kind", kind, "id", anyTask.Id, "attempt", anyTask.Attempt, "retried", anyTask.Retried, "args", anyTask.Args, "insertOpts", insertOpts)
 		err = taskUnit.ProcessTask(ctx)
 		if err != nil {
+			taskErr := TaskError{
+				Message:   err.Error(),
+				Details:   nil,
+				Timestamp: time.Now(),
+			}
+			if w.storeEnabled {
+				err = w.store.AddTaskError(ctx, anyTask.Id, taskErr)
+				if err != nil {
+					return fmt.Errorf("failed to add task error: %w", err)
+				}
+				var retryErr *jobSnoozeError
+				if insertOpts.MaxRetries > 0 && anyTask.Attempt < insertOpts.MaxRetries || errors.As(err, &retryErr) {
+					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
+					if err != nil {
+						return fmt.Errorf("failed to update task status: %w", err)
+					}
+				} else {
+					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusFailed)
+					if err != nil {
+						return fmt.Errorf("failed to update task status: %w", err)
+					}
+				}
+
+			}
 			return fmt.Errorf("failed to process task: %w", err)
+		}
+
+		if w.storeEnabled {
+			err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusSuccess)
+			if err != nil {
+				return fmt.Errorf("failed to update task status: %w", err)
+			}
 		}
 
 		return nil
 	}
 
 	// Apply snooze middleware to the base handler
-	snoozeMw := handleSnooze(w.client, w.log)
+	snoozeMw := snoozeMw(w.transport, w.log)
 	baseHandler = snoozeMw(baseHandler)
 
 	// Apply all middleware to the base handler
