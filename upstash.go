@@ -6,7 +6,6 @@ import (
 	"github.com/cloudevents/sdk-go/v2"
 	"github.com/mscno/uptask/internal/events"
 	"github.com/samber/oops"
-	"log/slog"
 	"time"
 )
 
@@ -42,7 +41,7 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 		targetUrlWithPath := fmt.Sprintf("%s", targetUrl)
 		ctx = v2.ContextWithTarget(ctx, targetUrlWithPath)
 		ctx = v2.WithEncodingStructured(ctx)
-		slog.Info("Dispatching task to target", "target", targetUrlWithPath, "task", ce.Type())
+		//slog.Info("Dispatching task to target", "target", targetUrlWithPath, "task", ce.Type())
 		headerOptions := make([]v2.HTTPOption, 0)
 		for i := 0; i < len(headers); i += 2 {
 			headerOptions = append(headerOptions, v2.WithHeader(headers[i], headers[i+1]))

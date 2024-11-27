@@ -147,7 +147,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 				Timestamp: time.Now(),
 			}
 			if w.storeEnabled {
-				err = w.store.AddTaskError(ctx, anyTask.Id, taskErr)
+				err := w.store.AddTaskError(ctx, anyTask.Id, taskErr)
 				if err != nil {
 					return fmt.Errorf("failed to add task error: %w", err)
 				}
