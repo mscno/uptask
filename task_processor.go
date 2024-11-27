@@ -181,7 +181,7 @@ func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T],
 }
 
 func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) {
-	var insertOpts TaskInsertOpts
+	insertOpts := new(TaskInsertOpts)
 	err := insertOpts.FromCloudEvent(w.ce)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to extract task insert options: %w", err)
@@ -191,15 +191,16 @@ func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal task: %w", err)
 	}
-
 	anytask := &AnyTask{
-		Id:        w.task.Id,
-		CreatedAt: w.task.CreatedAt,
-		Attempt:   w.task.Attempt,
-		Retried:   w.task.Retried,
-		Args:      w.task.Args,
-		Scheduled: w.task.Scheduled,
+		Id:              w.task.Id,
+		CreatedAt:       w.task.CreatedAt,
+		Attempt:         w.task.Attempt,
+		Retried:         w.task.Retried,
+		Args:            w.task.Args,
+		Scheduled:       w.task.Scheduled,
+		QstashMessageId: w.task.qstashMessageId,
+		ScheduleId:      w.task.scheduleId,
 	}
 
-	return anytask, &insertOpts, nil
+	return anytask, insertOpts, nil
 }

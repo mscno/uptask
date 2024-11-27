@@ -410,7 +410,7 @@ func renderStatust(status uptask.TaskStatus) string {
 	case uptask.TaskStatusPending:
 		return fmt.Sprintf("⏳  %s", status) // Symbol for pending
 	case uptask.TaskStatusRunning:
-		return fmt.Sprintf("🔄  %s", status) // Symbol for running
+		return fmt.Sprintf("🔄 %s", status) // Symbol for running
 	case uptask.TaskStatusSuccess:
 		return fmt.Sprintf("✅  %s", status) // Symbol for success
 	case uptask.TaskStatusFailed:

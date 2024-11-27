@@ -108,6 +108,10 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			// If so, we need to create a new task execution
 			// and update the task status to running
 			if anyTask.Retried == 0 && anyTask.Scheduled {
+				if insertOpts.MaxRetries == 0 {
+					w.log.Warn("max retries not set, defaulting to 3", "kind", kind, "id", anyTask.Id)
+					insertOpts.MaxRetries = 3
+				}
 				w.log.Debug("creating new task execution from cron source", "kind", kind, "id", anyTask.Id, "args", anyTask.Args, "insertOpts", insertOpts)
 				err = w.store.CreateTaskExecution(ctx, &TaskExecution{
 					ID:              ce.ID(),
@@ -115,10 +119,10 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 					Status:          TaskStatusPending,
 					Args:            anyTask.Args,
 					AttemptID:       "",
-					Attempt:         0,
+					Attempt:         anyTask.Attempt, // todo decide if this should be 0 or 1
 					MaxAttempts:     insertOpts.MaxRetries,
-					QstashMessageID: "",
-					ScheduleID:      "",
+					QstashMessageID: anyTask.QstashMessageId,
+					ScheduleID:      anyTask.ScheduleId,
 					CreatedAt:       time.Now(),
 					AttemptedAt:     time.Time{},
 					ScheduledAt:     insertOpts.ScheduledAt,

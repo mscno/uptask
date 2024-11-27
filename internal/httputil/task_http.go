@@ -33,6 +33,16 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 		}
 	}
 
+	var upstashScheduleId string
+	if upstashScheduleId = r.Header.Get(upstashScheduledIdHeader); upstashScheduleId != "" {
+		ce.SetExtension(events.ScheduleIdExtension, upstashScheduleId)
+	}
+
+	var upstashMessageId string
+	if upstashMessageId = r.Header.Get(upstashMessageIdHeader); upstashMessageId != "" {
+		ce.SetExtension(events.QstashMessageIdExtension, upstashMessageId)
+	}
+
 	// Set the scheduled task extension if the task was scheduled.
 	ce.SetExtension(events.ScheduledTaskExtension, fmt.Sprintf("%t", scheduled))
 
@@ -41,6 +51,7 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 	if retried = r.Header.Get(upstashAttemptHeader); retried == "" {
 		retried = "0"
 	}
+
 	ce.SetExtension(events.TaskRetriedExtension, retried)
 
 	return *ce, nil

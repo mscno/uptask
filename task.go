@@ -15,21 +15,25 @@ type TaskArgs interface {
 }
 
 type Task[T any] struct {
-	Id        string
-	CreatedAt time.Time
-	Attempt   int
-	Retried   int
-	Scheduled bool
-	Args      T
+	Id              string
+	qstashMessageId string
+	scheduleId      string
+	CreatedAt       time.Time
+	Attempt         int
+	Retried         int
+	Scheduled       bool
+	Args            T
 }
 
 type AnyTask struct {
-	Id        string
-	CreatedAt time.Time
-	Attempt   int
-	Retried   int
-	Scheduled bool
-	Args      interface{}
+	Id              string
+	CreatedAt       time.Time
+	Attempt         int
+	Retried         int
+	Scheduled       bool
+	ScheduleId      string
+	QstashMessageId string
+	Args            interface{}
 }
 
 func unmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
@@ -48,6 +52,17 @@ func unmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
 	task.Retried, _ = strconv.Atoi(retried)
 	// Set the task attempt number to the retried number plus one.
 	task.Attempt = task.Retried + 1
+
+	var scheduleId string
+	ce.ExtensionAs(events.ScheduleIdExtension, &scheduleId)
+	task.scheduleId = scheduleId
+
+	var upstashMessageId string
+	err = ce.ExtensionAs(events.QstashMessageIdExtension, &upstashMessageId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get task qstash message ID extension: %w", err)
+	}
+	task.qstashMessageId = upstashMessageId
 
 	// Extract the task scheduled extension from the event and set it on the task.
 	var scheduled string
