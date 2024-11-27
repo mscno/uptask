@@ -172,7 +172,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 					}
 				}
 			}
-			if err != nil {
+			if err == nil {
 				panic("should never happen")
 			}
 			return fmt.Errorf("failed to process task: %w", err)
