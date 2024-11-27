@@ -2,7 +2,6 @@ package uptask
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"log/slog"
@@ -148,36 +147,9 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 				Timestamp: time.Now(),
 			}
 			if w.storeEnabled {
-				var retryErr *jobSnoozeError
-				if errors.As(err, &retryErr) {
-					err := w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
-					if err != nil {
-						return fmt.Errorf("failed to update task status: %w", err)
-					}
-					err = w.store.UpdateTaskSnoozedTask(ctx, anyTask.Id, time.Now().Add(retryErr.duration))
-					if err != nil {
-						return fmt.Errorf("failed to update task status: %w", err)
-					}
-				} else {
-					err := w.store.AddTaskError(ctx, anyTask.Id, taskErr)
-					if err != nil {
-						return fmt.Errorf("failed to add task error: %w", err)
-					}
+				if err := w.handleTaskError(ctx, anyTask.Id, err, taskErr, insertOpts, anyTask.Attempt); err != nil {
+					return err
 				}
-				if insertOpts.MaxRetries > 0 && anyTask.Attempt < insertOpts.MaxRetries {
-					err := w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
-					if err != nil {
-						return fmt.Errorf("failed to update task status: %w", err)
-					}
-				} else {
-					err := w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusFailed)
-					if err != nil {
-						return fmt.Errorf("failed to update task status: %w", err)
-					}
-				}
-			}
-			if err == nil {
-				panic("should never happen")
 			}
 			return fmt.Errorf("failed to process task: %w", err)
 		}
@@ -209,6 +181,33 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 
 	w.handlersAdded = true
 	w.log.Info("task handler registered", "kind", kind)
+
+	return nil
+}
+
+func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err error, taskErr TaskError, opts *TaskInsertOpts, attempt int) error {
+	if retryErr, ok := err.(*jobSnoozeError); ok {
+		if err := w.store.UpdateTaskStatus(ctx, taskID, TaskStatusPending); err != nil {
+			return fmt.Errorf("failed to update task status: %w", err)
+		}
+		if err := w.store.UpdateTaskSnoozedTask(ctx, taskID, time.Now().Add(retryErr.duration)); err != nil {
+			return fmt.Errorf("failed to update snoozed task: %w", err)
+		}
+		return nil
+	}
+
+	if err := w.store.AddTaskError(ctx, taskID, taskErr); err != nil {
+		return fmt.Errorf("failed to add task error: %w", err)
+	}
+
+	newStatus := TaskStatusFailed
+	if opts.MaxRetries > 0 && attempt < opts.MaxRetries {
+		newStatus = TaskStatusPending
+	}
+
+	if err := w.store.UpdateTaskStatus(ctx, taskID, newStatus); err != nil {
+		return fmt.Errorf("failed to update task status: %w", err)
+	}
 
 	return nil
 }
