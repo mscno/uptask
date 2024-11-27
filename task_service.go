@@ -150,7 +150,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			if w.storeEnabled {
 				var retryErr *jobSnoozeError
 				if errors.As(err, &retryErr) {
-					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
+					err := w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
 					if err != nil {
 						return fmt.Errorf("failed to update task status: %w", err)
 					}
@@ -161,17 +161,19 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 					}
 				}
 				if insertOpts.MaxRetries > 0 && anyTask.Attempt < insertOpts.MaxRetries {
-					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
+					err := w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
 					if err != nil {
 						return fmt.Errorf("failed to update task status: %w", err)
 					}
 				} else {
-					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusFailed)
+					err := w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusFailed)
 					if err != nil {
 						return fmt.Errorf("failed to update task status: %w", err)
 					}
 				}
-
+			}
+			if err != nil {
+				panic("should never happen")
 			}
 			return fmt.Errorf("failed to process task: %w", err)
 		}

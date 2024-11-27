@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/cloudevents/sdk-go/v2"
+	"github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/mscno/uptask/internal/events"
 	"github.com/samber/oops"
 	"time"
@@ -83,12 +84,20 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 				With("event", ce).
 				Wrap(deliveryErr)
 		}
-		if deliveryErr != nil {
-			return oops.In("taskserver").
-				Tags("StartTask", "failed to send task").
-				With("event", ce).
-				Wrap(deliveryErr)
+		switch x := deliveryErr.(type) {
+		case nil:
+			return nil
+		case *http.Result:
+			if x.StatusCode >= 400 {
+				return oops.In("taskserver").
+					Tags("StartTask", "task enqueuing failed").
+					With("event", ce).
+					With("status", x.StatusCode).
+					Wrap(deliveryErr)
+			}
+			return nil
+		default:
+			return nil
 		}
-		return nil
 	})
 }
