@@ -47,12 +47,6 @@ func snoozeMw(transport Transport, log Logger, store TaskStore) Middleware {
 					if err != nil {
 						return fmt.Errorf("failed to snooze task: %w", err)
 					}
-					if store != nil {
-						err := store.UpdateTaskScheduledAt(ctx, ce.ID(), opts.ScheduledAt)
-						if err != nil {
-							return fmt.Errorf("failed to update task scheduled at: %w", err)
-						}
-					}
 					return nil
 				}
 			}

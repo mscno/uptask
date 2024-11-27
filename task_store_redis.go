@@ -132,6 +132,10 @@ func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, st
 		task.FinalizedAt = time.Now()
 	}
 
+	if status == TaskStatusPending {
+		task.Attempt--
+	}
+
 	// Marshal updated task
 	taskJSON, err := json.Marshal(task)
 	if err != nil {
@@ -164,13 +168,14 @@ func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, st
 	return nil
 }
 
-func (s *RedisTaskStore) UpdateTaskScheduledAt(ctx context.Context, taskID string, scheduledAt time.Time) error {
+func (s *RedisTaskStore) UpdateTaskSnoozedTask(ctx context.Context, taskID string, scheduledAt time.Time) error {
 	task, err := s.GetTaskExecution(ctx, taskID)
 	if err != nil {
 		return err
 	}
 
 	task.ScheduledAt = scheduledAt
+	//task.Attempt--
 
 	// Marshal updated task
 	taskJSON, err := json.Marshal(task)

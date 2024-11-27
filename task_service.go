@@ -154,6 +154,10 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 					if err != nil {
 						return fmt.Errorf("failed to update task status: %w", err)
 					}
+					err = w.store.UpdateTaskSnoozedTask(ctx, anyTask.Id, time.Now().Add(retryErr.duration))
+					if err != nil {
+						return fmt.Errorf("failed to update task status: %w", err)
+					}
 				} else {
 					err := w.store.AddTaskError(ctx, anyTask.Id, taskErr)
 					if err != nil {
