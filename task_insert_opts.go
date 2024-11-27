@@ -20,11 +20,11 @@ func (o *TaskInsertOpts) FromCloudEvent(ce cloudevents.Event) error {
 	if err != nil {
 		return err
 	}
-	*o = *opts
+	*o = opts
 	return nil
 }
 
-func insertInsertOptsFromEvent(ce cloudevents.Event) (*TaskInsertOpts, error) {
+func insertInsertOptsFromEvent(ce cloudevents.Event) (TaskInsertOpts, error) {
 	opts := TaskInsertOpts{}
 	exts := ce.Extensions()
 
@@ -49,7 +49,7 @@ func insertInsertOptsFromEvent(ce cloudevents.Event) (*TaskInsertOpts, error) {
 		opts.Queue = s
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("queue parsing error: %w", err)
+		return TaskInsertOpts{}, fmt.Errorf("queue parsing error: %w", err)
 	}
 
 	if err = parseExtension(events.TaskNotBeforeExtension, func(s string) error {
@@ -60,7 +60,7 @@ func insertInsertOptsFromEvent(ce cloudevents.Event) (*TaskInsertOpts, error) {
 		opts.ScheduledAt = time.Unix(scheduledAt, 0)
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("scheduled time parsing error: %w", err)
+		return TaskInsertOpts{}, fmt.Errorf("scheduled time parsing error: %w", err)
 	}
 
 	if err = parseExtension(events.TaskMaxRetriesExtension, func(s string) error {
@@ -74,8 +74,8 @@ func insertInsertOptsFromEvent(ce cloudevents.Event) (*TaskInsertOpts, error) {
 		}
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("max retries parsing error: %w", err)
+		return TaskInsertOpts{}, fmt.Errorf("max retries parsing error: %w", err)
 	}
 
-	return &opts, nil
+	return opts, nil
 }

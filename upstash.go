@@ -76,12 +76,18 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 			return oops.Wrap(err)
 		}
 
-		res := transport.Send(ctx, ce)
-		if v2.IsUndelivered(res) {
+		deliveryErr := transport.Send(ctx, ce)
+		if v2.IsUndelivered(deliveryErr) {
+			return oops.In("taskserver").
+				Tags("StartTask", "task is undelivered").
+				With("event", ce).
+				Wrap(deliveryErr)
+		}
+		if deliveryErr != nil {
 			return oops.In("taskserver").
 				Tags("StartTask", "failed to send task").
 				With("event", ce).
-				Wrap(res)
+				Wrap(deliveryErr)
 		}
 		return nil
 	})

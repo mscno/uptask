@@ -66,6 +66,8 @@ type TaskStore interface {
 	GetTaskExecution(ctx context.Context, taskID string) (*TaskExecution, error)
 	DeleteTaskExecution(ctx context.Context, taskID string) error
 	UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error
+	UpdateTaskScheduledAt(ctx context.Context, taskID string, scheduledAt time.Time) error
+
 	AddTaskError(ctx context.Context, taskID string, err TaskError) error
 
 	// Query operations

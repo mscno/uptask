@@ -109,6 +109,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			// If so, we need to create a new task execution
 			// and update the task status to running
 			if anyTask.Retried == 0 && anyTask.Scheduled {
+				w.log.Debug("creating new task execution from cron source", "kind", kind, "id", anyTask.Id, "args", anyTask.Args, "insertOpts", insertOpts)
 				err = w.store.CreateTaskExecution(ctx, &TaskExecution{
 					ID:              ce.ID(),
 					TaskKind:        ce.Type(),
@@ -147,12 +148,19 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 				Timestamp: time.Now(),
 			}
 			if w.storeEnabled {
-				err := w.store.AddTaskError(ctx, anyTask.Id, taskErr)
-				if err != nil {
-					return fmt.Errorf("failed to add task error: %w", err)
-				}
 				var retryErr *jobSnoozeError
-				if insertOpts.MaxRetries > 0 && anyTask.Attempt < insertOpts.MaxRetries || errors.As(err, &retryErr) {
+				if errors.As(err, &retryErr) {
+					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
+					if err != nil {
+						return fmt.Errorf("failed to update task status: %w", err)
+					}
+				} else {
+					err := w.store.AddTaskError(ctx, anyTask.Id, taskErr)
+					if err != nil {
+						return fmt.Errorf("failed to add task error: %w", err)
+					}
+				}
+				if insertOpts.MaxRetries > 0 && anyTask.Attempt < insertOpts.MaxRetries {
 					err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusPending)
 					if err != nil {
 						return fmt.Errorf("failed to update task status: %w", err)
@@ -179,7 +187,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 	}
 
 	// Apply snooze middleware to the base handler
-	snoozeMw := snoozeMw(w.transport, w.log)
+	snoozeMw := snoozeMw(w.transport, w.log, w.store)
 	baseHandler = snoozeMw(baseHandler)
 
 	// Apply all middleware to the base handler

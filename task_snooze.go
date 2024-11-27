@@ -29,7 +29,7 @@ func (e *jobSnoozeError) Is(target error) bool {
 	return ok
 }
 
-func snoozeMw(transport Transport, log Logger) Middleware {
+func snoozeMw(transport Transport, log Logger, store TaskStore) Middleware {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(ctx context.Context, ce cloudevents.Event) error {
 			err := next(ctx, ce)
@@ -43,7 +43,17 @@ func snoozeMw(transport Transport, log Logger) Middleware {
 					// Requeue the task with a new scheduled time
 					log.Info("snoozing task", "duration", snoozeErr.duration, "task", ce.Type(), "id", ce.ID())
 					opts.ScheduledAt = time.Now().Add(snoozeErr.duration)
-					return transport.Send(ctx, ce, opts)
+					err = transport.Send(ctx, ce, &opts)
+					if err != nil {
+						return fmt.Errorf("failed to snooze task: %w", err)
+					}
+					if store != nil {
+						err := store.UpdateTaskScheduledAt(ctx, ce.ID(), opts.ScheduledAt)
+						if err != nil {
+							return fmt.Errorf("failed to update task scheduled at: %w", err)
+						}
+					}
+					return nil
 				}
 			}
 			return err

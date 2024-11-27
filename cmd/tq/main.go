@@ -79,11 +79,6 @@ func initializeModel() *model {
 		fmt.Println("QSTASH_TOKEN environment variable is required")
 		os.Exit(1)
 	}
-	jobUrl := os.Getenv("JOB_URL")
-	if jobUrl == "" {
-		fmt.Println("JOB_URL environment variable is required")
-		os.Exit(1)
-	}
 	redisUrl := os.Getenv("REDIS_URL")
 	if redisUrl == "" {
 		fmt.Println("REDIS_URL environment variable is required")
@@ -130,7 +125,8 @@ func initializeModel() *model {
 			{Title: "Status", Width: 12},
 			{Title: "Attempt", Width: 8},
 			{Title: "Queue", Width: 10},
-			{Title: "Created At", Width: 20},
+			{Title: "Created At", Width: 35},
+			{Title: "Scheduled At", Width: 35},
 		}),
 		table.WithStyles(tableStyle),
 		table.WithFocused(true),
@@ -191,7 +187,8 @@ func (m *model) updateTable() {
 			status,
 			fmt.Sprintf("%d/%d", task.Attempt, task.MaxAttempts),
 			task.Queue,
-			task.CreatedAt.Format("2006-01-02 15:04:05"),
+			dashIfZeroTimeAgo(task.CreatedAt),
+			dashIfZeroTimeScheduled(task.ScheduledAt),
 		}
 	}
 	m.lastUpdate = time.Now()
@@ -342,10 +339,10 @@ func (m model) viewTask() string {
 	status := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Status:"), valueStyle.Render(renderStatus(m.activeTask.Status)))
 	attempts := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Attempts:"), valueStyle.Render(fmt.Sprintf("%d/%d", m.activeTask.Attempt, m.activeTask.MaxAttempts)))
 	queue := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Queue:"), valueStyle.Render(m.activeTask.Queue))
-	createdAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Created At:"), valueStyle.Render(dashIfZeroTime(m.activeTask.CreatedAt)))
-	attemptedAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Attempted At:"), valueStyle.Render(dashIfZeroTime(m.activeTask.AttemptedAt)))
-	scheduledAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Scheduled At:"), valueStyle.Render(dashIfZeroTime(m.activeTask.ScheduledAt)))
-	finalizedAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Finalized At:"), valueStyle.Render(dashIfZeroTime(m.activeTask.FinalizedAt)))
+	createdAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Created At:"), valueStyle.Render(dashIfZeroTimeAgo(m.activeTask.CreatedAt)))
+	attemptedAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Attempted At:"), valueStyle.Render(dashIfZeroTimeAgo(m.activeTask.AttemptedAt)))
+	scheduledAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Scheduled At:"), valueStyle.Render(dashIfZeroTimeScheduled(m.activeTask.ScheduledAt)))
+	finalizedAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Finalized At:"), valueStyle.Render(dashIfZeroTimeAgo(m.activeTask.FinalizedAt)))
 	qstashMessageID := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("QStash Message ID:"), valueStyle.Render(m.activeTask.QstashMessageID))
 	scheduleID := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Schedule ID:"), valueStyle.Render(m.activeTask.ScheduleID))
 
@@ -423,9 +420,45 @@ func renderStatust(status uptask.TaskStatus) string {
 	}
 }
 
-func dashIfZeroTime(t time.Time) string {
+func dashIfZeroTimeAgo(t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-	return t.Format("2006-01-02 15:04:05")
+	now := time.Now()
+	ago := now.Sub(t)
+	var agoStr string
+	if ago < time.Minute {
+		agoStr = fmt.Sprintf("%ds ago", int(ago.Seconds()))
+	} else if ago < time.Hour {
+		agoStr = fmt.Sprintf("%dm ago", int(ago.Minutes()))
+	} else if ago < 24*time.Hour {
+		agoStr = fmt.Sprintf("%dh ago", int(ago.Hours()))
+	} else {
+		agoStr = fmt.Sprintf("%dd ago", int(ago.Hours()/24))
+	}
+	return t.Format("2006-01-02 15:04:05") + " (" + agoStr + ")"
+}
+
+func dashIfZeroTimeScheduled(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	now := time.Now()
+	in := t.Sub(now)
+	var inStr string
+	if in < time.Minute {
+		inStr = fmt.Sprintf("in %ds", int(in.Seconds()))
+	} else if in < time.Hour {
+		inStr = fmt.Sprintf("in %dm", int(in.Minutes()))
+	} else if in < 24*time.Hour {
+		inStr = fmt.Sprintf("in %dh", int(in.Hours()))
+	} else {
+		inStr = fmt.Sprintf("in %dd", int(in.Hours()/24))
+	}
+	return t.Format("2006-01-02 15:04:05") + " (" + inStr + ")"
+}
+
+func addInXMinutes(t time.Time, minutes int) time.Time {
+
+	return t.Add(time.Duration(minutes) * time.Minute)
 }

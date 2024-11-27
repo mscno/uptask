@@ -164,6 +164,30 @@ func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, st
 	return nil
 }
 
+func (s *RedisTaskStore) UpdateTaskScheduledAt(ctx context.Context, taskID string, scheduledAt time.Time) error {
+	task, err := s.GetTaskExecution(ctx, taskID)
+	if err != nil {
+		return err
+	}
+
+	task.ScheduledAt = scheduledAt
+
+	// Marshal updated task
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("failed to marshal task: %w", err)
+	}
+
+	// Update task hash
+	taskKey := taskPrefix + taskID
+	err = s.client.HSet(ctx, taskKey, "data", string(taskJSON)).Err()
+	if err != nil {
+		return fmt.Errorf("failed to update task: %w", err)
+	}
+
+	return nil
+}
+
 func (s *RedisTaskStore) DeleteTaskExecution(ctx context.Context, taskID string) error {
 	// Get the task first to check existence and get status
 	taskKey := taskPrefix + taskID

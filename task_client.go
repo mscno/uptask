@@ -49,6 +49,9 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 	if opts == nil {
 		opts = &TaskInsertOpts{MaxRetries: 3}
 	}
+	if opts.MaxRetries == 0 {
+		opts.MaxRetries = 3
+	}
 	ce, err := events.SerializeWithExt(ctx, args, events.TaskRetriedExtension, "0")
 	if err != nil {
 		return "", fmt.Errorf("failed to serialize task: %v", err)
