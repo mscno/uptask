@@ -63,6 +63,7 @@ func main() {
 		Addr:     fmt.Sprintf("%s:%s", redisUrl, redisPort),
 		Username: "default",
 		Password: redisPassword,
+		Secure:   true,
 	})
 	if err != nil {
 		fmt.Println("Failed to create Redis task store", err)

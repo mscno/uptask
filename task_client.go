@@ -92,7 +92,7 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 				}
 			}()
 		}
-		return "", fmt.Errorf("failed to send task: %v", err)
+		return "", fmt.Errorf("failed to send task: %w", err)
 	}
 	c.log.Debug("task enqueued", "task", ce.ID(), "kind", ce.Type(), "args", args)
 	return ce.ID(), nil

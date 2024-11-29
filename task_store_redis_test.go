@@ -182,14 +182,15 @@ func TestSnoozeTaskStatus(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Update status to snoozed
-		err = store.UpdateTaskSnoozedTask(ctx, "task1", time.Now().Add(time.Hour))
+		now := time.Now().Truncate(time.Second)
+		err = store.UpdateTaskSnoozedTask(ctx, "task1", now)
 		assert.NoError(t, err)
 
 		// Verify status change
 		retrieved, err := store.GetTaskExecution(ctx, "task1")
 		assert.NoError(t, err)
 		assert.Equal(t, TaskStatusPending, retrieved.Status)
-		assert.Equal(t, time.Now().Add(time.Hour).Truncate(time.Second), retrieved.ScheduledAt)
+		assert.Equal(t, now, retrieved.ScheduledAt)
 
 		// Verify status sets updated
 		assert.True(t, mr.Exists("tasks:status:PENDING"))

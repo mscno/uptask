@@ -25,12 +25,18 @@ type RedisConfig struct {
 	Username string
 	Password string
 	DB       int
+	Secure   bool
 	// Add any other Redis-specific config you need
 }
 
 func NewRedisTaskStore(cfg RedisConfig) (*RedisTaskStore, error) {
 
-	opts, err := redis.ParseURL(fmt.Sprintf("rediss://%s:%s@%s", cfg.Username, cfg.Password, cfg.Addr))
+	protocol := "redis"
+	if cfg.Secure {
+		protocol = "rediss"
+	}
+
+	opts, err := redis.ParseURL(fmt.Sprintf("%s://%s:%s@%s", protocol, cfg.Username, cfg.Password, cfg.Addr))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Redis URL: %w", err)
 	}
