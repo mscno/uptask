@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.2.4
 	github.com/cloudevents/sdk-go/v2 v2.15.2
-	github.com/goccy/go-yaml v1.15.1
+	github.com/goccy/go-yaml v1.15.3
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/samber/lo v1.47.0

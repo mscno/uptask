@@ -125,7 +125,6 @@ func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, st
 	task.Status = status
 	if status == TaskStatusRunning {
 		task.AttemptedAt = time.Now()
-		task.Attempt++
 	}
 
 	if status == TaskStatusSuccess || status == TaskStatusFailed {
@@ -133,7 +132,7 @@ func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, st
 	}
 
 	if status == TaskStatusPending {
-		task.Attempt--
+		task.Attempt++
 	}
 
 	// Marshal updated task
@@ -173,9 +172,10 @@ func (s *RedisTaskStore) UpdateTaskSnoozedTask(ctx context.Context, taskID strin
 	if err != nil {
 		return err
 	}
-
+	oldStatus := task.Status
+	task.Status = TaskStatusPending
 	task.ScheduledAt = scheduledAt
-	//task.Attempt--
+	task.Attempt--
 
 	// Marshal updated task
 	taskJSON, err := json.Marshal(task)
@@ -184,10 +184,27 @@ func (s *RedisTaskStore) UpdateTaskSnoozedTask(ctx context.Context, taskID strin
 	}
 
 	// Update task hash
+	pipe := s.client.Pipeline()
+
+	// Update task hash
 	taskKey := taskPrefix + taskID
-	err = s.client.HSet(ctx, taskKey, "data", string(taskJSON)).Err()
+	pipe.HSet(ctx, taskKey, map[string]interface{}{
+		"data":   string(taskJSON),
+		"status": string(task.Status),
+	})
+
+	// Remove from old status set and add to new status set
+	oldStatusKey := statusPrefix + string(oldStatus)
+	newStatusKey := statusPrefix + string(task.Status)
+	pipe.ZRem(ctx, oldStatusKey, taskID)
+	pipe.ZAdd(ctx, newStatusKey, redis.Z{
+		Score:  float64(task.CreatedAt.Unix()),
+		Member: taskID,
+	})
+
+	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to update task: %w", err)
+		return fmt.Errorf("failed to update task status: %w", err)
 	}
 
 	return nil

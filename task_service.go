@@ -119,7 +119,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 					Status:          TaskStatusPending,
 					Args:            anyTask.Args,
 					AttemptID:       "",
-					Attempt:         anyTask.Attempt, // todo decide if this should be 0 or 1
+					Attempt:         0, // todo decide if this should be 0 or 1
 					MaxAttempts:     insertOpts.MaxRetries,
 					QstashMessageID: anyTask.QstashMessageId,
 					ScheduleID:      anyTask.ScheduleId,
@@ -138,7 +138,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			// Update task status to running
 			err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusRunning)
 			if err != nil {
-				return fmt.Errorf("failed to create task execution: %w", err)
+				return fmt.Errorf("failed to update task execution: %w", err)
 			}
 		}
 
@@ -191,9 +191,6 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 
 func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err error, taskErr TaskError, opts *TaskInsertOpts, attempt int) error {
 	if retryErr, ok := err.(*jobSnoozeError); ok {
-		if err := w.store.UpdateTaskStatus(ctx, taskID, TaskStatusPending); err != nil {
-			return fmt.Errorf("failed to update task status: %w", err)
-		}
 		if err := w.store.UpdateTaskSnoozedTask(ctx, taskID, time.Now().Add(retryErr.duration)); err != nil {
 			return fmt.Errorf("failed to update snoozed task: %w", err)
 		}

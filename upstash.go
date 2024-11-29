@@ -85,8 +85,6 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 				Wrap(deliveryErr)
 		}
 		switch x := deliveryErr.(type) {
-		case nil:
-			return nil
 		case *http.Result:
 			if x.StatusCode >= 400 {
 				return oops.In("taskserver").

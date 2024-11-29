@@ -165,6 +165,56 @@ func TestUpdateTaskStatus(t *testing.T) {
 	})
 }
 
+func TestSnoozeTaskStatus(t *testing.T) {
+	store, mr := setupTestRedis(t)
+	defer mr.Close()
+
+	ctx := context.Background()
+	task := createTestTask("task1")
+
+	t.Run("successful status update", func(t *testing.T) {
+		// Create task first
+		err := store.CreateTaskExecution(ctx, task)
+		require.NoError(t, err)
+
+		// Update status
+		err = store.UpdateTaskStatus(ctx, "task1", TaskStatusRunning)
+		assert.NoError(t, err)
+
+		// Update status to snoozed
+		err = store.UpdateTaskSnoozedTask(ctx, "task1", time.Now().Add(time.Hour))
+		assert.NoError(t, err)
+
+		// Verify status change
+		retrieved, err := store.GetTaskExecution(ctx, "task1")
+		assert.NoError(t, err)
+		assert.Equal(t, TaskStatusPending, retrieved.Status)
+		assert.Equal(t, time.Now().Add(time.Hour).Truncate(time.Second), retrieved.ScheduledAt)
+
+		// Verify status sets updated
+		assert.True(t, mr.Exists("tasks:status:PENDING"))
+		assert.False(t, mr.Exists("tasks:status:RUNNING"))
+	})
+
+	t.Run("update non-existent task", func(t *testing.T) {
+		err := store.UpdateTaskStatus(ctx, "nonexistent", TaskStatusRunning)
+		assert.Error(t, err)
+	})
+
+	t.Run("update to final status", func(t *testing.T) {
+		task := createTestTask("task2")
+		err := store.CreateTaskExecution(ctx, task)
+		require.NoError(t, err)
+
+		err = store.UpdateTaskStatus(ctx, "task2", TaskStatusSuccess)
+		assert.NoError(t, err)
+
+		retrieved, err := store.GetTaskExecution(ctx, "task2")
+		assert.NoError(t, err)
+		assert.False(t, retrieved.FinalizedAt.IsZero())
+	})
+}
+
 func TestAddTaskError(t *testing.T) {
 	store, mr := setupTestRedis(t)
 	defer mr.Close()

@@ -59,7 +59,7 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 	c.log.Info("enqueueing task", "task", ce.Type(), "id", ce.ID())
 
 	if c.storeEnabled {
-		err = c.store.CreateTaskExecution(ctx, &TaskExecution{
+		err := c.store.CreateTaskExecution(ctx, &TaskExecution{
 			ID:              ce.ID(),
 			TaskKind:        ce.Type(),
 			Status:          TaskStatusPending,
@@ -85,6 +85,7 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 	if err != nil {
 		if c.storeEnabled {
 			go func() {
+				c.log.Debug("cleaning up and deleting task", "task", ce.ID())
 				err := c.store.DeleteTaskExecution(context.Background(), ce.ID())
 				if err != nil {
 					c.log.Error("failed to cleanup and delete task", "task", ce.ID(), "error", err)
@@ -93,5 +94,6 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 		}
 		return "", fmt.Errorf("failed to send task: %v", err)
 	}
+	c.log.Debug("task enqueued", "task", ce.ID(), "kind", ce.Type(), "args", args)
 	return ce.ID(), nil
 }
