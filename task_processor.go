@@ -177,7 +177,27 @@ func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T],
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return handler.ProcessTask(ctx, task)
+
+	done := make(chan error, 1)
+
+	go func() {
+		// Execute the task handler and send the result to the `done` channel.
+		done <- handler.ProcessTask(ctx, task)
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Context timeout or cancellation
+		err := ctx.Err()
+		if err == context.DeadlineExceeded {
+			return fmt.Errorf("task timed out after %v: %w", timeout, err)
+		} else {
+			return fmt.Errorf("task cancelled: %w", err)
+		}
+	case err := <-done:
+		// Task completed
+		return err
+	}
 }
 
 func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) {
