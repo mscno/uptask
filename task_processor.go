@@ -77,7 +77,7 @@ func (w TaskHandlerDefaults[T]) NextRetry(*Task[T]) time.Time { return time.Time
 
 // Timeout returns the task-specific timeout. Override this method to set a
 // task-specific timeout, otherwise the Service-level timeout will be applied.
-func (w TaskHandlerDefaults[T]) Timeout(*Task[T]) time.Duration { return time.Second * 30 }
+func (w TaskHandlerDefaults[T]) Timeout(*Task[T]) time.Duration { return time.Minute * 60 }
 
 // AddTaskHandler registers a TaskHandler on the provided TaskService bundle. Each TaskHandler must
 // be registered so that the Service knows it should handle a specific kind of

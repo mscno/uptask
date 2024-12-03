@@ -279,7 +279,7 @@ func (s *RedisTaskStore) AddTaskError(ctx context.Context, taskID string, taskEr
 	taskKey := taskPrefix + taskID
 	err = s.client.HSet(ctx, taskKey, "data", string(taskJSON)).Err()
 	if err != nil {
-		return fmt.Errorf("failed to add task error: %w", err)
+		return fmt.Errorf("failed to set HSet error: %w", err)
 	}
 
 	return nil
