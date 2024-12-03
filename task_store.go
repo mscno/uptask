@@ -62,6 +62,7 @@ type TaskFilter struct {
 // TaskStore defines the interface for task storage operations
 type TaskStore interface {
 	// Core operations
+	TaskExists(ctx context.Context, taskID string) (bool, error)
 	CreateTaskExecution(ctx context.Context, task *TaskExecution) error
 	GetTaskExecution(ctx context.Context, taskID string) (*TaskExecution, error)
 	DeleteTaskExecution(ctx context.Context, taskID string) error

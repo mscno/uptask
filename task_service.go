@@ -107,7 +107,8 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			// Check if task is first attempt and scheduled
 			// If so, we need to create a new task execution
 			// and update the task status to running
-			if anyTask.Retried == 0 && anyTask.Scheduled {
+			alreadyExists, _ := w.store.TaskExists(ctx, anyTask.Id)
+			if anyTask.Scheduled && !alreadyExists {
 				if insertOpts.MaxRetries == 0 {
 					w.log.Warn("max retries not set, defaulting to 3", "kind", kind, "id", anyTask.Id)
 					insertOpts.MaxRetries = 3

@@ -120,6 +120,15 @@ func (s *RedisTaskStore) GetTaskExecution(ctx context.Context, taskID string) (*
 	return &task, nil
 }
 
+func (s *RedisTaskStore) TaskExists(ctx context.Context, taskID string) (bool, error) {
+	taskKey := taskPrefix + taskID
+	keys, err := s.client.Exists(ctx, taskKey).Result()
+	if err != nil {
+		return false, err
+	}
+	return keys == 1, nil
+}
+
 func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error {
 	task, err := s.GetTaskExecution(ctx, taskID)
 	if err != nil {
