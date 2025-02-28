@@ -236,7 +236,7 @@ func (t task) Payload() any {
 func createQstashJob(ctx context.Context, qstashToken string, job QJob) (*QstashScheduledJob, error) {
 	job = setJobDefaults(job)
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 35 * time.Second,
 	}
 
 	// Construct the create URL
@@ -295,6 +295,7 @@ func createQstashJob(ctx context.Context, qstashToken string, job QJob) (*Qstash
 	}
 	if job.Retries > 0 {
 		req.Header.Set("Upstash-Retries", fmt.Sprintf("%d", job.Retries))
+		req.Header.Set("Upstash-Forward-Upstash-Retries", fmt.Sprintf("%d", job.Retries))
 	}
 	if job.CallbackURL != "" {
 		req.Header.Set("Upstash-Callback", job.CallbackURL)

@@ -1,9 +1,12 @@
 qjobs:
-  - destination: "https://madssmacstudio.tail4cb2a6.ts.net/"
+  - destination: "https://madss-mac-studio.tail4cb2a6.ts.net"
     cron: "* * * * *"
     content_type: "application/cloudevents+json"
     kind: "DummyTask"
+    timeout: "2h"
+    retries: 2
     args:
       name: "my super job"
       my_arg: "my super arg"
       my_int: 1
+      my_bool: true

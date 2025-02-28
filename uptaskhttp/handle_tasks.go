@@ -12,12 +12,14 @@ func HandleTasks(service *uptask.TaskService) http.HandlerFunc {
 		ce, err := httputil.NewEventFromHTTPRequest(r)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(err.Error()))
 			return
 		}
 		err = service.HandleEvent(r.Context(), ce)
 		if err != nil {
 			slog.Error(err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
 			return
 		}
 		w.WriteHeader(http.StatusOK)

@@ -2,8 +2,10 @@ package uptask
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/samber/oops"
 	"log/slog"
 	"os"
 	"sync"
@@ -55,14 +57,14 @@ func WithStore(s TaskStore) ServiceOption {
 // Use the top-level AddTaskHandler function combined with a TaskService registry to
 // register each available task handler.
 func NewTaskService(transport Transport, opts ...ServiceOption) *TaskService {
-	l := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
 	svc := &TaskService{
-		log:         l,
 		TaskClient:  NewTaskClient(transport),
 		transport:   transport,
 		handlersMap: make(map[string]handlerInfo),
 		middlewares: make([]Middleware, 0),
+	}
+	if svc.log == nil {
+		svc.log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
 
 	for _, opt := range opts {
@@ -107,21 +109,21 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			// Check if task is first attempt and scheduled
 			// If so, we need to create a new task execution
 			// and update the task status to running
-			alreadyExists, _ := w.store.TaskExists(ctx, anyTask.Id)
+			alreadyExists, _ := w.store.TaskExists(context.WithoutCancel(ctx), anyTask.Id)
 			if anyTask.Scheduled && !alreadyExists {
 				if insertOpts.MaxRetries == 0 {
 					w.log.Warn("max retries not set, defaulting to 3", "kind", kind, "id", anyTask.Id)
 					insertOpts.MaxRetries = 3
 				}
 				w.log.Debug("creating new task execution from cron source", "kind", kind, "id", anyTask.Id, "args", anyTask.Args, "insertOpts", insertOpts)
-				err = w.store.CreateTaskExecution(ctx, &TaskExecution{
+				err = w.store.CreateTaskExecution(context.WithoutCancel(ctx), &TaskExecution{
 					ID:              ce.ID(),
 					TaskKind:        ce.Type(),
 					Status:          TaskStatusPending,
 					Args:            anyTask.Args,
 					AttemptID:       "",
-					Attempt:         0, // todo decide if this should be 0 or 1
-					MaxAttempts:     insertOpts.MaxRetries,
+					Retried:         0, // todo decide if this should be 0 or 1
+					MaxRetries:      insertOpts.MaxRetries,
 					QstashMessageID: anyTask.QstashMessageId,
 					ScheduleID:      anyTask.ScheduleId,
 					CreatedAt:       time.Now(),
@@ -137,22 +139,25 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 			}
 
 			// Update task status to running
-			err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusRunning)
+			err = w.store.UpdateTaskStatus(context.WithoutCancel(ctx), anyTask.Id, TaskStatusRunning)
 			if err != nil {
 				return fmt.Errorf("failed to update task execution: %w", err)
 			}
 		}
 
-		w.log.Info("processing task", "kind", kind, "id", anyTask.Id, "attempt", anyTask.Attempt, "retried", anyTask.Retried, "args", anyTask.Args, "insertOpts", insertOpts)
+		w.log.Info("processing task", "kind", kind, "id", anyTask.Id, "retried", anyTask.Retried, "retried", anyTask.Retried, "maxRetries", insertOpts.MaxRetries)
 		err = taskUnit.ProcessTask(ctx)
+		err = oops.With("taskArgs", taskArgs, "task", anyTask).Wrap(err)
+
 		if err != nil {
+			//w.log.Error(err.Error(), "taskId", anyTask.Id, "error", err)
 			taskErr := TaskError{
 				Message:   err.Error(),
 				Details:   nil,
 				Timestamp: time.Now(),
 			}
 			if w.storeEnabled {
-				if err := w.handleTaskError(ctx, anyTask.Id, err, taskErr, insertOpts, anyTask.Attempt); err != nil {
+				if err := w.handleTaskError(context.WithoutCancel(ctx), anyTask.Id, err, taskErr, insertOpts, anyTask.Retried); err != nil {
 					return err
 				}
 			}
@@ -160,7 +165,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 		}
 
 		if w.storeEnabled {
-			err = w.store.UpdateTaskStatus(ctx, anyTask.Id, TaskStatusSuccess)
+			err = w.store.UpdateTaskStatus(context.WithoutCancel(ctx), anyTask.Id, TaskStatusSuccess)
 			if err != nil {
 				return fmt.Errorf("failed to update task status: %w", err)
 			}
@@ -170,7 +175,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 	}
 
 	// Apply snooze middleware to the base handler
-	snoozeMw := snoozeMw(w.transport, w.log, w.store)
+	snoozeMw := snoozeMw(w.transport, w.log, w.storeEnabled, w.store)
 	baseHandler = snoozeMw(baseHandler)
 
 	// Apply all middleware to the base handler
@@ -190,8 +195,10 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 	return nil
 }
 
-func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err error, taskErr TaskError, opts *TaskInsertOpts, attempt int) error {
-	if retryErr, ok := err.(*jobSnoozeError); ok {
+func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err error, taskErr TaskError, opts *TaskInsertOpts, retries int) error {
+	//slog.Error("handleTaskError", "taskID", taskID, "err", err, "taskErr", taskErr, "attempt", attempt, "opts", opts)
+	var retryErr *jobSnoozeError
+	if errors.As(err, &retryErr) {
 		if err := w.store.UpdateTaskSnoozedTask(ctx, taskID, time.Now().Add(retryErr.duration)); err != nil {
 			return fmt.Errorf("failed to update snoozed task: %w", err)
 		}
@@ -203,10 +210,10 @@ func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err er
 	}
 
 	newStatus := TaskStatusFailed
-	if opts.MaxRetries > 0 && attempt < opts.MaxRetries {
+
+	if opts.MaxRetries > 0 && retries < opts.MaxRetries {
 		newStatus = TaskStatusPending
 	}
-
 	if err := w.store.UpdateTaskStatus(ctx, taskID, newStatus); err != nil {
 		return fmt.Errorf("failed to update task status: %w", err)
 	}

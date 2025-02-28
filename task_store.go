@@ -24,9 +24,10 @@ type TaskExecution struct {
 	Args     interface{} `json:"args"`
 
 	// Attempt tracking
-	AttemptID   string `json:"attempt_id"`
-	Attempt     int    `json:"attempt"`
-	MaxAttempts int    `json:"max_attempts"`
+	AttemptID string `json:"attempt_id"`
+	//Attempt     int    `json:"attempt"`
+	Retried    int `json:"retried"`
+	MaxRetries int `json:"max_retries"`
 
 	// External references
 	QstashMessageID string `json:"qstash_message_id,omitempty"`

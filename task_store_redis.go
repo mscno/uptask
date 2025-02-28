@@ -140,14 +140,19 @@ func (s *RedisTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, st
 	task.Status = status
 	if status == TaskStatusRunning {
 		task.AttemptedAt = time.Now()
+		task.ScheduledAt = time.Time{}
 	}
 
 	if status == TaskStatusSuccess || status == TaskStatusFailed {
 		task.FinalizedAt = time.Now()
+		task.ScheduledAt = time.Time{}
+	}
+
+	if status == TaskStatusFailed {
 	}
 
 	if status == TaskStatusPending {
-		task.Attempt++
+		task.Retried++
 	}
 
 	// Marshal updated task
@@ -190,8 +195,8 @@ func (s *RedisTaskStore) UpdateTaskSnoozedTask(ctx context.Context, taskID strin
 	oldStatus := task.Status
 	task.Status = TaskStatusPending
 	task.ScheduledAt = scheduledAt
-	task.Attempt--
-
+	task.Retried++
+	task.MaxRetries++
 	// Marshal updated task
 	taskJSON, err := json.Marshal(task)
 	if err != nil {

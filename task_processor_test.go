@@ -55,7 +55,7 @@ type DummyTaskProcessor struct {
 
 type taskContainer struct {
 	Id          string
-	Attempt     int
+	Retried     int
 	CompletedAt time.Time
 	CreatedAt   time.Time
 	DummyTask   DummyTask
@@ -67,12 +67,11 @@ func (svc *DummyTaskProcessor) ProcessTask(ctx context.Context, task *Task[Dummy
 	fmt.Printf("Processing task: %s\n", task.Args.Name)
 	fmt.Printf("Task type: %s\n", task.Args.Kind())
 	fmt.Printf("Task ID: %s\n", task.Id)
-	fmt.Printf("Task Attempt: %d\n", task.Attempt)
 	fmt.Printf("Task Retried: %d\n", task.Retried)
 	fmt.Printf("Task Created At: %s\n", task.CreatedAt)
 	fmt.Println("")
 
-	if task.Args.FailFirst && task.Attempt == 1 {
+	if task.Args.FailFirst && task.Retried == 0 {
 		return fmt.Errorf("failing on first")
 	}
 
@@ -85,7 +84,7 @@ func (svc *DummyTaskProcessor) ProcessTask(ctx context.Context, task *Task[Dummy
 
 	svc.Tasks = append(svc.Tasks, taskContainer{
 		Id:          task.Id,
-		Attempt:     task.Attempt,
+		Retried:     task.Retried,
 		CompletedAt: time.Now(),
 		CreatedAt:   task.CreatedAt,
 		DummyTask:   task.Args})
@@ -141,9 +140,11 @@ func TestTaskHandlerAndClient(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		ce.SetExtension(events.QstashMessageIdExtension, uuid.NewString())
 		err = tsvc.HandleEvent(r.Context(), ce)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -284,11 +285,11 @@ func TestUpstashTransport(t *testing.T) {
 	require.NoError(t, err)
 
 	time.Sleep(time.Second * 15)
-	for i := 0; i < 120; i++ {
+	for i := 0; i < 300; i++ {
 		if len(worker.Tasks) >= 3 {
 			for _, task := range worker.Tasks {
 				if task.DummyTask.Name == "test fail" {
-					require.True(t, task.Attempt > 1)
+					require.True(t, task.Retried > 0)
 				}
 				if task.DummyTask.Name == "test snooze" {
 					require.True(t, task.CompletedAt.After(task.CreatedAt.Add(15*time.Second)))

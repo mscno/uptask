@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/mscno/uptask/internal/events"
+	"log/slog"
+	"strconv"
 	"time"
 )
 
@@ -29,7 +32,7 @@ func (e *jobSnoozeError) Is(target error) bool {
 	return ok
 }
 
-func snoozeMw(transport Transport, log Logger, store TaskStore) Middleware {
+func snoozeMw(transport Transport, log Logger, storeEnabled bool, store TaskStore) Middleware {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(ctx context.Context, ce cloudevents.Event) error {
 			err := next(ctx, ce)
@@ -40,8 +43,19 @@ func snoozeMw(transport Transport, log Logger, store TaskStore) Middleware {
 					if err != nil {
 						return err
 					}
+					retried, err := retriedFromEvent(ce)
+					if !storeEnabled {
+						if err != nil {
+							return err
+						}
+						opts.MaxRetries = opts.MaxRetries - retried
+					} else {
+						opts.MaxRetries = opts.MaxRetries + 1
+						ce.SetExtension(events.TaskRetriedExtension, strconv.Itoa(retried+1))
+					}
+
 					// Requeue the task with a new scheduled time
-					log.Info("snoozing task", "duration", snoozeErr.duration, "task", ce.Type(), "id", ce.ID())
+					log.Info("snoozing task", "duration", snoozeErr.duration, "task", ce.Type(), "id", ce.ID(), "retried", retried, "maxRetries", opts.MaxRetries)
 					opts.ScheduledAt = time.Now().Add(snoozeErr.duration)
 					err = transport.Send(ctx, ce, &opts)
 					if err != nil {

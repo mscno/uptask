@@ -31,8 +31,8 @@ func createTestTask(id string) *TaskExecution {
 		Status:          TaskStatusPending,
 		Args:            map[string]interface{}{"test": "value"},
 		AttemptID:       "attempt1",
-		Attempt:         1,
-		MaxAttempts:     3,
+		Retried:         1,
+		MaxRetries:      3,
 		QstashMessageID: "qstash1",
 		ScheduleID:      "schedule1",
 		CreatedAt:       now,
@@ -190,7 +190,7 @@ func TestSnoozeTaskStatus(t *testing.T) {
 		retrieved, err := store.GetTaskExecution(ctx, "task1")
 		assert.NoError(t, err)
 		assert.Equal(t, TaskStatusPending, retrieved.Status)
-		assert.Equal(t, now, retrieved.ScheduledAt)
+		assert.Equal(t, now.UTC(), retrieved.ScheduledAt.UTC())
 
 		// Verify status sets updated
 		assert.True(t, mr.Exists("tasks:status:PENDING"))

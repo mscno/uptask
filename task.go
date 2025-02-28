@@ -19,7 +19,7 @@ type Task[T any] struct {
 	qstashMessageId string
 	scheduleId      string
 	CreatedAt       time.Time
-	Attempt         int
+	MaxRetries      int
 	Retried         int
 	Scheduled       bool
 	Args            T
@@ -28,7 +28,7 @@ type Task[T any] struct {
 type AnyTask struct {
 	Id              string
 	CreatedAt       time.Time
-	Attempt         int
+	MaxRetries      int
 	Retried         int
 	Scheduled       bool
 	ScheduleId      string
@@ -50,8 +50,6 @@ func unmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
 		return nil, fmt.Errorf("failed to get task retried extension: %w", err)
 	}
 	task.Retried, _ = strconv.Atoi(retried)
-	// Set the task attempt number to the retried number plus one.
-	task.Attempt = task.Retried + 1
 
 	var scheduleId string
 	ce.ExtensionAs(events.ScheduleIdExtension, &scheduleId)
@@ -71,6 +69,16 @@ func unmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
 		return nil, fmt.Errorf("failed to get task scheduled extension: %w", err)
 	}
 	task.Scheduled, _ = strconv.ParseBool(scheduled)
+
+	// Extract the task scheduled extension from the event and set it on the task.
+	if _, ok := ce.Extensions()[events.TaskMaxRetriesExtension]; ok {
+		var maxRetries string
+		err = ce.ExtensionAs(events.TaskMaxRetriesExtension, &maxRetries)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get task maxRetries extension: %w", err)
+		}
+		task.MaxRetries, _ = strconv.Atoi(maxRetries)
+	}
 
 	err = events.Deserialize(ce, &task.Args)
 	if err != nil {

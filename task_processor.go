@@ -214,7 +214,7 @@ func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) 
 	anytask := &AnyTask{
 		Id:              w.task.Id,
 		CreatedAt:       w.task.CreatedAt,
-		Attempt:         w.task.Attempt,
+		MaxRetries:      w.task.MaxRetries,
 		Retried:         w.task.Retried,
 		Args:            w.task.Args,
 		Scheduled:       w.task.Scheduled,

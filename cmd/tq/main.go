@@ -97,6 +97,7 @@ func initializeModel() *model {
 		Addr:     fmt.Sprintf("%s:%s", redisUrl, redisPort),
 		Username: "default",
 		Password: redisPassword,
+		Secure:   true,
 	})
 	if err != nil {
 		fmt.Println("Failed to create task store", err)
@@ -123,7 +124,7 @@ func initializeModel() *model {
 			{Title: "ID", Width: 36},
 			{Title: "Task Kind", Width: 25},
 			{Title: "Status", Width: 12},
-			{Title: "Attempt", Width: 8},
+			{Title: "Retries", Width: 8},
 			{Title: "Queue", Width: 10},
 			{Title: "Created At", Width: 35},
 			{Title: "Scheduled At", Width: 35},
@@ -185,7 +186,7 @@ func (m *model) updateTable() {
 			task.ID,
 			task.TaskKind,
 			status,
-			fmt.Sprintf("%d/%d", task.Attempt, task.MaxAttempts),
+			fmt.Sprintf("%d/%d", task.Retried, task.MaxRetries),
 			task.Queue,
 			dashIfZeroTimeAgo(task.CreatedAt),
 			dashIfZeroTimeScheduled(task.ScheduledAt),
@@ -337,7 +338,7 @@ func (m model) viewTask() string {
 	id := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Task ID:"), valueStyle.Render(m.activeTask.ID))
 	taskKind := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Task Kind:"), valueStyle.Render(m.activeTask.TaskKind))
 	status := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Status:"), valueStyle.Render(renderStatus(m.activeTask.Status)))
-	attempts := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Attempts:"), valueStyle.Render(fmt.Sprintf("%d/%d", m.activeTask.Attempt, m.activeTask.MaxAttempts)))
+	retried := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Retried:"), valueStyle.Render(fmt.Sprintf("%d/%d", m.activeTask.Retried, m.activeTask.MaxRetries)))
 	queue := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Queue:"), valueStyle.Render(m.activeTask.Queue))
 	createdAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Created At:"), valueStyle.Render(dashIfZeroTimeAgo(m.activeTask.CreatedAt)))
 	attemptedAt := lipgloss.JoinHorizontal(lipgloss.Left, labelStyle.Render("Attempted At:"), valueStyle.Render(dashIfZeroTimeAgo(m.activeTask.AttemptedAt)))
@@ -378,7 +379,7 @@ func (m model) viewTask() string {
 		taskKind,
 		id,
 		status,
-		attempts,
+		retried,
 		queue,
 		createdAt,
 		attemptedAt,
@@ -410,7 +411,7 @@ func renderStatust(status uptask.TaskStatus) string {
 	case uptask.TaskStatusPending:
 		return fmt.Sprintf("⏳  %s", status) // Symbol for pending
 	case uptask.TaskStatusRunning:
-		return fmt.Sprintf("🔄 %s", status) // Symbol for running
+		return fmt.Sprintf("🔄  %s", status) // Symbol for running
 	case uptask.TaskStatusSuccess:
 		return fmt.Sprintf("✅  %s", status) // Symbol for success
 	case uptask.TaskStatusFailed:

@@ -10,7 +10,8 @@ import (
 )
 
 const (
-	upstashAttemptHeader     = "Upstash-Retried"
+	upstashRetriesHeader     = "Upstash-Retries"
+	upstashRetriedHeader     = "Upstash-Retried"
 	upstashScheduledIdHeader = "Upstash-Schedule-Id"
 	upstashMessageIdHeader   = "Upstash-Message-Id"
 )
@@ -48,18 +49,27 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 
 	// Extract the upstash attempt number from the request header and set it as an extension.
 	var retried string
-	if retried = r.Header.Get(upstashAttemptHeader); retried == "" {
+	if retried = r.Header.Get(upstashRetriedHeader); retried == "" {
 		retried = "0"
 	}
-
 	ce.SetExtension(events.TaskRetriedExtension, retried)
+
+	if _, ok := ce.Extensions()[events.TaskRetriedExtension]; !ok {
+		ce.SetExtension(events.TaskRetriedExtension, retried)
+	}
+
+	var maxRetries string
+	if maxRetries = r.Header.Get(upstashRetriesHeader); upstashMessageId != "" {
+		if _, ok := ce.Extensions()[events.TaskMaxRetriesExtension]; !ok {
+			ce.SetExtension(events.TaskMaxRetriesExtension, maxRetries)
+		}
+	}
 
 	return *ce, nil
 }
 
 func stableUUID(input string) uuid.UUID {
 	hash := sha256.Sum256([]byte(input))
-	fmt.Println("stableUUID", input, uuid.Must(uuid.FromBytes(hash[:16])).String())
 	// Use the first 16 bytes to create a UUID
 	return uuid.Must(uuid.FromBytes(hash[:16]))
 }
