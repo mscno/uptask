@@ -3,10 +3,12 @@ package httputil
 import (
 	"crypto/sha256"
 	"fmt"
+	"net/http"
+	"strconv"
+
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/google/uuid"
 	"github.com/mscno/uptask/internal/events"
-	"net/http"
 )
 
 const (
@@ -34,35 +36,44 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 		}
 	}
 
-	var upstashScheduleId string
-	if upstashScheduleId = r.Header.Get(upstashScheduledIdHeader); upstashScheduleId != "" {
-		ce.SetExtension(events.ScheduleIdExtension, upstashScheduleId)
+	// Set schedule ID if available
+	if scheduleID := r.Header.Get(upstashScheduledIdHeader); scheduleID != "" {
+		events.SetScheduleID(ce, scheduleID)
 	}
 
-	var upstashMessageId string
-	if upstashMessageId = r.Header.Get(upstashMessageIdHeader); upstashMessageId != "" {
-		ce.SetExtension(events.QstashMessageIdExtension, upstashMessageId)
+	// Set message ID if available
+	if messageID := r.Header.Get(upstashMessageIdHeader); messageID != "" {
+		events.SetQstashMessageID(ce, messageID)
 	}
 
-	// Set the scheduled task extension if the task was scheduled.
-	ce.SetExtension(events.ScheduledTaskExtension, fmt.Sprintf("%t", scheduled))
+	// Set scheduled flag
+	events.SetScheduled(ce, scheduled)
 
-	// Extract the upstash attempt number from the request header and set it as an extension.
-	var retried string
-	if retried = r.Header.Get(upstashRetriedHeader); retried == "" {
+	// Extract and set retry information
+	retried := r.Header.Get(upstashRetriedHeader)
+	if retried == "" {
 		retried = "0"
 	}
-	ce.SetExtension(events.TaskRetriedExtension, retried)
 
-	if _, ok := ce.Extensions()[events.TaskRetriedExtension]; !ok {
-		ce.SetExtension(events.TaskRetriedExtension, retried)
+	// TODO Verify this retried number
+	// Extract retried from qstash headers.
+	retriedInt := 0
+	if r, err := strconv.Atoi(retried); err == nil {
+		retriedInt = r
+	}
+	// Check for preexisting retried in the task. This should take precedence.
+	events.SetRetried(ce, retriedInt)
+	if retried, ok := events.GetRetried(ce); ok {
+		events.SetRetried(ce, retried)
 	}
 
-	var maxRetries string
-	if maxRetries = r.Header.Get(upstashRetriesHeader); upstashMessageId != "" {
-		if _, ok := ce.Extensions()[events.TaskMaxRetriesExtension]; !ok {
-			ce.SetExtension(events.TaskMaxRetriesExtension, maxRetries)
+	// Set max retries if available
+	if maxRetries := r.Header.Get(upstashRetriesHeader); maxRetries != "" {
+		maxRetriesInt := 0
+		if mr, err := strconv.Atoi(maxRetries); err == nil {
+			maxRetriesInt = mr
 		}
+		events.SetMaxRetries(ce, maxRetriesInt)
 	}
 
 	return *ce, nil

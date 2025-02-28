@@ -6,7 +6,6 @@ import (
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/mscno/uptask/internal/events"
-	"log/slog"
 	"strconv"
 	"time"
 )
@@ -44,6 +43,7 @@ func snoozeMw(transport Transport, log Logger, storeEnabled bool, store TaskStor
 						return err
 					}
 					retried, err := retriedFromEvent(ce)
+					// TODO Check this logic is OK
 					if !storeEnabled {
 						if err != nil {
 							return err

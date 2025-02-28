@@ -6,8 +6,6 @@ import (
 	"github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/mscno/uptask/internal/events"
-	"log/slog"
-	"strconv"
 	"time"
 )
 
@@ -69,6 +67,29 @@ func NewUpstashTaskError(code ErrorCode, operation string, message string, cause
 // WithEvent adds event data to the error
 func (e *UpstashTaskError) WithEvent(event v2.Event) *UpstashTaskError {
 	e.Event = &event
+
+	// Add useful extension information to metadata for easier debugging
+	if e.Event != nil {
+		if events.IsScheduled(e.Event) {
+			e.WithMetadata("scheduled", true)
+			scheduleID := events.GetScheduleID(e.Event)
+			if scheduleID != "" {
+				e.WithMetadata("schedule_id", scheduleID)
+			}
+		}
+
+		retried, _ := events.GetRetried(e.Event)
+		maxRetries, _ := events.GetMaxRetries(e.Event)
+		if maxRetries > 0 {
+			e.WithMetadata("retries", fmt.Sprintf("%d/%d", retried, maxRetries))
+		}
+
+		qstashMsgID := events.GetQstashMessageID(e.Event)
+		if qstashMsgID != "" {
+			e.WithMetadata("qstash_message_id", qstashMsgID)
+		}
+	}
+
 	return e
 }
 
@@ -111,14 +132,14 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 		}
 
 		if opts.MaxRetries >= 0 {
-
-			// TODO Check if this is correct?
-			if retriedStr, ok := ce.Extensions()[events.TaskRetriedExtension].(string); ok {
-				retried, _ := strconv.Atoi(retriedStr)
+			// Subtract any previous retries from max retries
+			// TODO Verify that this is correct
+			if retried, ok := events.GetRetried(&ce); ok {
 				opts.MaxRetries = opts.MaxRetries - retried
 			}
+
 			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Retries", fmt.Sprintf("%d", opts.MaxRetries)))
-			ce.SetExtension(events.TaskMaxRetriesExtension, fmt.Sprintf("%d", opts.MaxRetries))
+			events.SetMaxRetries(&ce, opts.MaxRetries)
 		}
 
 		if !opts.ScheduledAt.IsZero() {
@@ -131,7 +152,7 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 				).WithEvent(ce)
 			}
 			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Not-Before", fmt.Sprintf("%d", opts.ScheduledAt.Unix())))
-			ce.SetExtension(events.TaskNotBeforeExtension, fmt.Sprintf("%d", opts.ScheduledAt.Unix()))
+			events.SetNotBefore(&ce, opts.ScheduledAt)
 		}
 
 		p, err := v2.NewHTTP(headerOptions...)

@@ -81,19 +81,23 @@ func insertInsertOptsFromEvent(ce cloudevents.Event) (TaskInsertOpts, error) {
 	//}); err != nil {
 	//	return TaskInsertOpts{}, fmt.Errorf("max retries parsing error: %w", err)
 	//}
-
-	if _, ok := ce.Extensions()[events.TaskNotBeforeExtension]; ok {
-		var scheduledAt string
-		if err := ce.ExtensionAs(events.TaskNotBeforeExtension, &scheduledAt); err != nil {
-			return TaskInsertOpts{}, fmt.Errorf("scheduledAt parsing error: %w", err)
-		}
-		scheduledAtTime, err := strconv.ParseInt(scheduledAt, 10, 64)
-		if err != nil {
-			return TaskInsertOpts{}, fmt.Errorf("invalid scheduled time format: %w", err)
-		}
-		opts.ScheduledAt = time.Unix(scheduledAtTime, 0)
+	if scheduledAt, ok := events.GetNotBefore(&ce); ok {
+		opts.ScheduledAt = scheduledAt
 	}
-
+	//if _, ok := ce.Extensions()[events.TaskNotBeforeExtension]; ok {
+	//	var scheduledAt string
+	//	if err := ce.ExtensionAs(events.TaskNotBeforeExtension, &scheduledAt); err != nil {
+	//		return TaskInsertOpts{}, fmt.Errorf("scheduledAt parsing error: %w", err)
+	//	}
+	//	scheduledAtTime, err := strconv.ParseInt(scheduledAt, 10, 64)
+	//	if err != nil {
+	//		return TaskInsertOpts{}, fmt.Errorf("invalid scheduled time format: %w", err)
+	//	}
+	//	opts.ScheduledAt = time.Unix(scheduledAtTime, 0)
+	//}
+	if maxRetries, ok := events.GetMaxRetries(&ce); ok {
+		opts.MaxRetries = maxRetries
+	}
 	if _, ok := ce.Extensions()[events.TaskMaxRetriesExtension]; ok {
 		var maxRetries string
 		if err := ce.ExtensionAs(events.TaskMaxRetriesExtension, &maxRetries); err != nil {
