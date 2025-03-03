@@ -7,6 +7,7 @@ const (
 	TaskQueueExtension       = "taskqueue"
 	TaskNotBeforeExtension   = "tasknotbefore"
 	ScheduledTaskExtension   = "scheduledtask"
+	TaskSnoozedExtension     = "tasksnoozed"
 	ScheduleIdExtension      = "scheduleid"
 	QstashMessageIdExtension = "qstashmessageid"
 )

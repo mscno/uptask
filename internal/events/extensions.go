@@ -65,6 +65,15 @@ func GetTimeExtension(event *cloudevents.Event, key string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+func GetSnoozed(event *cloudevents.Event) int {
+	val, _ := GetIntExtension(event, TaskSnoozedExtension)
+	return val
+}
+
+func BumpSnoozed(event *cloudevents.Event) {
+	event.SetExtension(TaskSnoozedExtension, strconv.Itoa(GetSnoozed(event)+1))
+}
+
 // IsScheduled returns true if the event was scheduled
 func IsScheduled(event *cloudevents.Event) bool {
 	val, ok := GetBoolExtension(event, ScheduledTaskExtension)
