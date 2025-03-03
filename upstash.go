@@ -132,14 +132,10 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 		}
 
 		if opts.MaxRetries >= 0 {
-			// Subtract any previous retries from max retries
-			// TODO Verify that this is correct
-			if retried, ok := events.GetRetried(&ce); ok {
-				opts.MaxRetries = opts.MaxRetries - retried
-			}
 
-			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Retries", fmt.Sprintf("%d", opts.MaxRetries)))
 			events.SetMaxRetries(&ce, opts.MaxRetries)
+			snoozed := events.GetSnoozed(&ce)
+			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Retries", fmt.Sprintf("%d", opts.MaxRetries-snoozed)))
 		}
 
 		if !opts.ScheduledAt.IsZero() {

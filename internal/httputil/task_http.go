@@ -3,6 +3,7 @@ package httputil
 import (
 	"crypto/sha256"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -23,7 +24,9 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 	if err != nil {
 		return cloudevents.Event{}, fmt.Errorf("failed to parse cloudevent from uptaskhttp request: %w", err)
 	}
+	slog.Debug("upstash header", "headers", r.Header)
 
+	slog.Debug("extenstions in", "ext", ce.Extensions())
 	// If the event ID is nil, we need to create a stable UUID from the message ID
 	// and set the source to "upstash".
 	// This happens when the event originates from an Upstash scheduled task.
@@ -62,9 +65,8 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 		retriedInt = r
 	}
 	// Check for preexisting retried in the task. This should take precedence.
-	events.SetRetried(ce, retriedInt)
-	if retried, ok := events.GetRetried(ce); ok {
-		events.SetRetried(ce, retried)
+	if _, ok := events.GetRetried(ce); !ok {
+		events.SetRetried(ce, retriedInt)
 	}
 
 	// Set max retries if available
@@ -73,9 +75,11 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 		if mr, err := strconv.Atoi(maxRetries); err == nil {
 			maxRetriesInt = mr
 		}
+		slog.Debug("setting upstash retries header", "max-retries", maxRetries)
 		events.SetMaxRetries(ce, maxRetriesInt)
 	}
 
+	slog.Debug("extenstions out", "ext", ce.Extensions())
 	return *ce, nil
 }
 

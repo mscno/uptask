@@ -6,7 +6,6 @@ import (
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/mscno/uptask/internal/events"
-	"strconv"
 	"time"
 )
 
@@ -42,17 +41,12 @@ func snoozeMw(transport Transport, log Logger, storeEnabled bool, store TaskStor
 					if err != nil {
 						return err
 					}
-					retried, err := retriedFromEvent(ce)
+
 					// TODO Check this logic is OK
-					if !storeEnabled {
-						if err != nil {
-							return err
-						}
-						opts.MaxRetries = opts.MaxRetries - retried
-					} else {
-						opts.MaxRetries = opts.MaxRetries + 1
-						ce.SetExtension(events.TaskRetriedExtension, strconv.Itoa(retried+1))
-					}
+					retried, _ := events.GetRetried(&ce)
+					opts.MaxRetries = opts.MaxRetries + 1
+					events.BumpSnoozed(&ce)
+					events.SetRetried(&ce, retried+1)
 
 					// Requeue the task with a new scheduled time
 					log.Info("snoozing task", "duration", snoozeErr.duration, "task", ce.Type(), "id", ce.ID(), "retried", retried, "maxRetries", opts.MaxRetries)
