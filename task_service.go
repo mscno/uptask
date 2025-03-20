@@ -27,7 +27,6 @@ type Logger interface {
 
 type TaskService struct {
 	*TaskClient
-	transport     Transport
 	log           Logger
 	mux           sync.Mutex
 	handlersAdded bool
@@ -59,7 +58,6 @@ func WithStore(s TaskStore) ServiceOption {
 func NewTaskService(transport Transport, opts ...ServiceOption) *TaskService {
 	svc := &TaskService{
 		TaskClient:  NewTaskClient(transport),
-		transport:   transport,
 		handlersMap: make(map[string]handlerInfo),
 		middlewares: make([]Middleware, 0),
 	}

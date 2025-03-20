@@ -3,9 +3,11 @@ package uptask
 import (
 	"context"
 	"fmt"
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/mscno/uptask/internal/events"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -27,6 +29,8 @@ func WithClientStore(s TaskStore) ClientOption {
 type TaskClient struct {
 	store        TaskStore
 	storeEnabled bool
+	mux          sync.Mutex
+	middlewares  []Middleware
 	log          Logger
 	transport    Transport
 }
@@ -45,6 +49,12 @@ func NewTaskClient(transport Transport, opts ...ClientOption) *TaskClient {
 	return client
 }
 
+func (t *TaskClient) Use(middlewares ...Middleware) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	t.middlewares = append(t.middlewares, middlewares...)
+}
+
 func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskInsertOpts) (string, error) {
 	if opts == nil {
 		opts = &TaskInsertOpts{MaxRetries: 3}
@@ -56,6 +66,10 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 	if err != nil {
 		return "", fmt.Errorf("failed to serialize task: %v", err)
 	}
+
+	// Apply all middleware to the base handler
+	//handler := baseHandler
+
 	c.log.Info("enqueueing task", "task", ce.Type(), "id", ce.ID())
 
 	if c.storeEnabled {
@@ -81,19 +95,32 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 		}
 	}
 
-	err = c.transport.Send(ctx, ce, opts)
-	if err != nil {
-		if c.storeEnabled {
-			go func() {
-				c.log.Debug("cleaning up and deleting task", "task", ce.ID())
-				err := c.store.DeleteTaskExecution(context.Background(), ce.ID())
-				if err != nil {
-					c.log.Error("failed to cleanup and delete task", "task", ce.ID(), "error", err)
-				}
-			}()
+	var handler HandlerFunc = func(ctx context.Context, event cloudevents.Event) error {
+		err = c.transport.Send(ctx, ce, opts)
+		if err != nil {
+			if c.storeEnabled {
+				go func() {
+					c.log.Debug("cleaning up and deleting task", "task", ce.ID())
+					err := c.store.DeleteTaskExecution(context.Background(), ce.ID())
+					if err != nil {
+						c.log.Error("failed to cleanup and delete task", "task", ce.ID(), "error", err)
+					}
+				}()
+			}
+			return err
 		}
+		return nil
+	}
+
+	for i := len(c.middlewares) - 1; i >= 0; i-- {
+		handler = c.middlewares[i](handler)
+	}
+
+	err = handler(ctx, ce)
+	if err != nil {
 		return "", fmt.Errorf("failed to send task: %w", err)
 	}
+
 	c.log.Debug("task enqueued", "task", ce.ID(), "kind", ce.Type(), "args", args)
 	return ce.ID(), nil
 }

@@ -166,6 +166,62 @@ func TestTaskHandlerAndClient(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTaskHandlerAndClientWithMiddleware(t *testing.T) {
+
+	tsvc := NewTaskService(dummyTransport())
+
+	handler := http.NewServeMux()
+	handler.Handle("POST /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ce, err := httputil.NewEventFromHTTPRequest(r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		ce.SetExtension(events.QstashMessageIdExtension, uuid.NewString())
+		err = tsvc.HandleEvent(r.Context(), ce)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	worker := &DummyTaskProcessor{}
+	tsvc.Use(func(handlerFunc HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, event cloudevents.Event) error {
+			if value, ok := event.Extensions()["test"].(string); !ok {
+				t.Errorf("test extension is not present")
+			} else {
+				fmt.Printf("test extension: %s\n", value)
+			}
+
+			return handlerFunc(ctx, event)
+		}
+	})
+	AddTaskHandler(tsvc, worker)
+
+	tsvcClient := NewTaskClient(newHttpTransport(srv.URL))
+	tsvcClient.Use(func(handlerFunc HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, event cloudevents.Event) error {
+			ext := ctx.Value("test")
+			event.SetExtension("test", ext)
+			return handlerFunc(ctx, event)
+		}
+	})
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "test", "hello")
+	dummyTask := DummyTask{Name: "test"}
+	id, err := tsvcClient.StartTask(ctx, dummyTask, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(worker.Tasks))
+	require.NotEmpty(t, id)
+	_, err = uuid.Parse(id)
+	require.NoError(t, err)
+}
+
 func TestLocalTunnelStreamingOutput(t *testing.T) {
 	t.Skip()
 	// Start the command
