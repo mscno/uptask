@@ -57,7 +57,6 @@ func WithStore(s TaskStore) ServiceOption {
 // register each available task handler.
 func NewTaskService(transport Transport, opts ...ServiceOption) *TaskService {
 	svc := &TaskService{
-		TaskClient:  NewTaskClient(transport),
 		handlersMap: make(map[string]handlerInfo),
 		middlewares: make([]Middleware, 0),
 	}
@@ -68,6 +67,15 @@ func NewTaskService(transport Transport, opts ...ServiceOption) *TaskService {
 	for _, opt := range opts {
 		opt(svc)
 	}
+
+	var clientsopts []ClientOption
+	if svc.storeEnabled {
+		clientsopts = append(clientsopts, WithClientStore(svc.store))
+	}
+	if svc.log != nil {
+		clientsopts = append(clientsopts, WithClientLogger(svc.log))
+	}
+	svc.TaskClient = NewTaskClient(transport, clientsopts...)
 
 	return svc
 }

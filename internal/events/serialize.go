@@ -24,7 +24,7 @@ func Serialize(ctx context.Context, args Kinder) (cloudevents.Event, error) {
 	return SerializeWithExt(ctx, args)
 }
 
-const Source = "fxfeed"
+const Source = "uptask"
 
 const ApplicationJson = "application/json"
 

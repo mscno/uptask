@@ -24,9 +24,9 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 	if err != nil {
 		return cloudevents.Event{}, fmt.Errorf("failed to parse cloudevent from uptaskhttp request: %w", err)
 	}
-	slog.Debug("upstash header", "headers", r.Header)
+	//slog.Debug("upstash header", "headers", r.Header)
 
-	slog.Debug("extenstions in", "ext", ce.Extensions())
+	//slog.Debug("extenstions in", "ext", ce.Extensions())
 	// If the event ID is nil, we need to create a stable UUID from the message ID
 	// and set the source to "upstash".
 	// This happens when the event originates from an Upstash scheduled task.
@@ -79,7 +79,7 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 		events.SetMaxRetries(ce, maxRetriesInt)
 	}
 
-	slog.Debug("extenstions out", "ext", ce.Extensions())
+	//slog.Debug("extenstions out", "ext", ce.Extensions())
 	return *ce, nil
 }
 
