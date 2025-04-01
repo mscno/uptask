@@ -3,7 +3,6 @@ package uptaskhttp
 import (
 	"encoding/json"
 	"github.com/mscno/uptask"
-	"github.com/upstash/qstash-go"
 	"net/http"
 	"strconv"
 )
@@ -11,7 +10,6 @@ import (
 type taskApi struct {
 	client *uptask.TaskClient
 	store  uptask.TaskStore
-	*qstash.Client
 }
 
 func NewTaskApi(client *uptask.TaskClient) *taskApi {
