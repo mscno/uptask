@@ -3,16 +3,22 @@ package uptask
 import (
 	"context"
 	"fmt"
-	"github.com/cloudevents/sdk-go/v2"
+	"io"
+	"log/slog"
+	"strings"
+	"time"
+
+	v2 "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/mscno/uptask/internal/events"
-	"time"
 )
 
 // UpstashTransport handles communication with Upstash QStash
 type UpstashTransport struct {
 	qstashToken string
 	targetUrl   string
+	dlq         string
+	logger      Logger
 }
 
 const upstashBaseUrl = "https://qstash.upstash.io/v2/publish"
@@ -99,21 +105,75 @@ func (e *UpstashTaskError) WithMetadata(key string, value interface{}) *UpstashT
 	return e
 }
 
-// NewUpstashTransport creates a new UpstashTransport instance
-func NewUpstashTransport(qstashToken, targetUrl string) *UpstashTransport {
-	return &UpstashTransport{
-		qstashToken: qstashToken,
-		targetUrl:   targetUrl,
+func WithDlq(dlq string) UpstashClientOpts {
+	return func(c *UpstashTransport) {
+		c.dlq = dlq
 	}
 }
 
-// Send dispatches a CloudEvent to Upstash
-func (c *UpstashTransport) Send(ctx context.Context, ce v2.Event, opts *TaskInsertOpts) error {
-	targetUrl := fmt.Sprintf("%s/%s", upstashBaseUrl, c.targetUrl)
-	if opts.Queue != "" {
-		targetUrl = fmt.Sprintf("%s/%s/%s", upstashQueueUrl, opts.Queue, c.targetUrl)
+func WithUpstashLogger(logger Logger) UpstashClientOpts {
+	return func(c *UpstashTransport) {
+		c.logger = logger
 	}
-	transportFn := newHttpTransport(targetUrl, "Authorization", fmt.Sprintf("Bearer %s", c.qstashToken))
+}
+
+type UpstashClientOpts func(c *UpstashTransport)
+
+// NewUpstashTransport creates a new UpstashTransport instance
+func NewUpstashTransport(qstashToken, targetUrl string, opts ...UpstashClientOpts) (*UpstashTransport, error) {
+	transport := &UpstashTransport{
+		qstashToken: qstashToken,
+		targetUrl:   targetUrl,
+	}
+
+	for _, opt := range opts {
+		opt(transport)
+	}
+
+	if transport.logger == nil {
+		transport.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
+	transport.targetUrl = strings.TrimRight(transport.targetUrl, "/")
+	transport.dlq = strings.TrimRight(transport.dlq, "/")
+
+	// Validate targetUrl has a protocol
+	if transport.targetUrl != "" && !strings.HasPrefix(transport.targetUrl, "http://") && !strings.HasPrefix(transport.targetUrl, "https://") {
+		return nil, fmt.Errorf("targetUrl must have a valid protocol (http:// or https://): %s", transport.targetUrl)
+	}
+
+	// Validate dlq has a protocol if it's set
+	if transport.dlq != "" && !strings.HasPrefix(transport.dlq, "http://") && !strings.HasPrefix(transport.dlq, "https://") {
+		return nil, fmt.Errorf("dlq must have a valid protocol (http:// or https://): %s", transport.dlq)
+	}
+
+	return transport, nil
+}
+
+// Send dispatches a CloudEvent to Upstash
+func (c *UpstashTransport) Send(ctx context.Context, ce v2.Event, opts *InsertOpts) error {
+
+	var taskPath string
+	payloadType := ce.Type()
+	parts := strings.SplitN(payloadType, "/", 2)
+	if len(parts) == 1 {
+		taskPath = fmt.Sprintf("/tasks/%s", parts[0])
+	} else {
+		taskPath = fmt.Sprintf("/events/%s/%s", parts[0], parts[1])
+	}
+
+	targetUrl := fmt.Sprintf("%s/%s%s", upstashBaseUrl, c.targetUrl, taskPath)
+	var headers = []string{
+		"Authorization", fmt.Sprintf("Bearer %s", c.qstashToken),
+	}
+	if opts.Queue != "" && opts.Queue != "default" {
+		targetUrl = fmt.Sprintf("%s/%s/%s%s", upstashQueueUrl, opts.Queue, c.targetUrl, taskPath)
+	}
+	if c.dlq != "" {
+		headers = append(headers, "Upstash-Failure-Callback", fmt.Sprintf("%s%s", c.dlq, taskPath))
+	}
+	c.logger.Debug("Sending event", "url", targetUrl, "dlq", c.dlq, "headers", headers)
+	transportFn := newHttpTransport(targetUrl, headers...)
 	return transportFn.Send(ctx, ce, opts)
 }
 
@@ -121,9 +181,8 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 	if len(headers)%2 != 0 {
 		panic("headers must be key-value pairs")
 	}
-	return transportFn(func(ctx context.Context, ce v2.Event, opts *TaskInsertOpts) error {
-		targetUrlWithPath := fmt.Sprintf("%s", targetUrl)
-		ctx = v2.ContextWithTarget(ctx, targetUrlWithPath)
+	return transportFn(func(ctx context.Context, ce v2.Event, opts *InsertOpts) error {
+		ctx = v2.ContextWithTarget(ctx, targetUrl)
 		ctx = v2.WithEncodingStructured(ctx)
 
 		headerOptions := make([]v2.HTTPOption, 0)
@@ -132,7 +191,6 @@ func newHttpTransport(targetUrl string, headers ...string) Transport {
 		}
 
 		if opts.MaxRetries >= 0 {
-
 			events.SetMaxRetries(&ce, opts.MaxRetries)
 			snoozed := events.GetSnoozed(&ce)
 			headerOptions = append(headerOptions, v2.WithHeader("Upstash-Retries", fmt.Sprintf("%d", opts.MaxRetries-snoozed)))

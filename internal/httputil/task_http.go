@@ -2,6 +2,8 @@ package httputil
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,6 +19,11 @@ const (
 	upstashRetriedHeader     = "Upstash-Retried"
 	upstashScheduledIdHeader = "Upstash-Schedule-Id"
 	upstashMessageIdHeader   = "Upstash-Message-Id"
+	upstashDlqId             = "dlqId"
+	upstashDlqRetried        = "retried"
+	upstashSourceMsgId       = "sourceMessageId"
+	upstashDlqMaxRetried     = "maxRetries"
+	upstashDlqscheduleId     = "scheduleId"
 )
 
 func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
@@ -65,8 +72,10 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 		retriedInt = r
 	}
 	// Check for preexisting retried in the task. This should take precedence.
-	if _, ok := events.GetRetried(ce); !ok {
+	if retriedExist, ok := events.GetRetried(ce); !ok {
 		events.SetRetried(ce, retriedInt)
+	} else {
+		events.SetRetried(ce, retriedExist+retriedInt)
 	}
 
 	// Set max retries if available
@@ -81,6 +90,77 @@ func NewEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
 
 	//slog.Debug("extenstions out", "ext", ce.Extensions())
 	return *ce, nil
+}
+
+func NewDlqEventFromHTTPRequest(r *http.Request) (cloudevents.Event, error) {
+	var v map[string]interface{}
+
+	err := json.NewDecoder(r.Body).Decode(&v)
+	if err != nil {
+		return cloudevents.Event{}, fmt.Errorf("failed to parse upstash-dlq event: %w", err)
+	}
+
+	dataStr := v["sourceBody"].(string)
+	data, err := base64.StdEncoding.DecodeString(dataStr)
+	if err != nil {
+		return cloudevents.Event{}, fmt.Errorf("failed to decdode upstash-dlq event body: %w", err)
+	}
+	ce := cloudevents.NewEvent(cloudevents.VersionV1)
+	err = ce.UnmarshalJSON(data)
+	if err != nil {
+		return cloudevents.Event{}, fmt.Errorf("failed to unmarshal cloudevent body: %w", err)
+	}
+	//slog.Debug("upstash header", "headers", r.Header)
+
+	//slog.Debug("extenstions in", "ext", ce.Extensions())
+	// If the event ID is nil, we need to create a stable UUID from the message ID
+	// and set the source to "upstash".
+	// This happens when the event originates from an Upstash scheduled task.
+	var scheduled bool
+	if id, err := uuid.Parse(ce.ID()); err == nil && id == uuid.Nil {
+		if msgIdHeader, ok := v[upstashSourceMsgId].(string); ok {
+			ce.SetID(stableUUID(msgIdHeader).String())
+			ce.SetSource("upstash")
+			scheduled = true
+		}
+	}
+
+	// Set schedule ID if available
+	if scheduleID, ok := v[upstashScheduledIdHeader].(string); ok {
+		events.SetScheduleID(&ce, scheduleID)
+	}
+
+	// Set message ID if available
+	if messageID, ok := v[upstashSourceMsgId].(string); ok {
+		events.SetQstashMessageID(&ce, messageID)
+	}
+
+	// Set scheduled flag
+	events.SetScheduled(&ce, scheduled)
+
+	// Extract and set retry information
+	retried, ok := v[upstashDlqRetried].(float64)
+	if ok && retried == 0 {
+		retried = 0
+	}
+
+	// Extract retried from qstash headers.
+	retriedInt := int(retried)
+	// Check for preexisting retried in the task. This should take precedence.
+	if retriedExist, ok := events.GetRetried(&ce); !ok {
+		events.SetRetried(&ce, retriedInt)
+	} else {
+		events.SetRetried(&ce, retriedExist+retriedInt)
+	}
+
+	// Set max retries if available
+	if maxRetries, ok := v[upstashDlqMaxRetried].(float64); ok {
+		slog.Debug("setting upstash retries header", "max-retries", maxRetries)
+		events.SetMaxRetries(&ce, int(maxRetries))
+	}
+
+	//slog.Debug("extenstions out", "ext", ce.Extensions())
+	return ce, nil
 }
 
 func stableUUID(input string) uuid.UUID {

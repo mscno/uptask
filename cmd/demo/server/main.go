@@ -63,8 +63,8 @@ func GetAnimalWithNumberFromUUID(uuidString string) string {
 	return fmt.Sprintf("%s-%02d", animals[animalIndex], numberValue)
 }
 
-func (p *DummyTaskProcessor) ProcessTask(ctx context.Context, task *uptask.Task[DummyTask]) error {
-	slog.Info(fmt.Sprintf("Processing task %s - Retries (%d/%d) - ID: %s", GetAnimalWithNumberFromUUID(task.Id), task.Retried, task.MaxRetries, task.Id))
+func (p *DummyTaskProcessor) ProcessTask(ctx context.Context, task *uptask.Container[DummyTask]) error {
+	slog.Info(fmt.Sprintf("Processing task %s - Retries (%d/%d) - ID: %s", GetAnimalWithNumberFromUUID(task.Id), task.Retried, task.InsertOpts.MaxRetries, task.Id))
 	var secs int
 
 	var secsToSleep = rand.IntN(8)
@@ -92,11 +92,11 @@ func (p *DummyTaskProcessor) ProcessTask(ctx context.Context, task *uptask.Task[
 		return uptask.JobSnooze(time.Second * 5)
 	}
 
-	slog.Info(fmt.Sprintf("Task completed %s - Retries (%d/%d) - ID: %s", GetAnimalWithNumberFromUUID(task.Id), task.Retried, task.MaxRetries, task.Id))
+	slog.Info(fmt.Sprintf("Task completed %s - Retries (%d/%d) - ID: %s", GetAnimalWithNumberFromUUID(task.Id), task.Retried, task.InsertOpts.MaxRetries, task.Id))
 	return nil
 }
 
-func (p *DummyTaskProcessor) Timeout(task *uptask.Task[DummyTask]) time.Duration {
+func (p *DummyTaskProcessor) Timeout(task *uptask.Container[DummyTask]) time.Duration {
 	return 5 * time.Second
 }
 
@@ -133,7 +133,10 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	transport := uptask.NewUpstashTransport(qstashToken, jobUrl)
+	transport, err := uptask.NewUpstashTransport(qstashToken, jobUrl)
+	if err != nil {
+		panic(err)
+	}
 	store, err := uptask.NewRedisTaskStore(uptask.RedisConfig{
 		Addr:     fmt.Sprintf("%s:%s", redisUrl, redisPort),
 		Username: "default",

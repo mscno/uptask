@@ -12,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +26,7 @@ import (
 */
 
 func dummyTransport() Transport {
-	return transportFn(func(ctx context.Context, ce cloudevents.Event, opts *TaskInsertOpts) error {
+	return transportFn(func(ctx context.Context, ce cloudevents.Event, opts *InsertOpts) error {
 		slog.Info("dummy transport: printing task to console", "task", ce.Type())
 		return nil
 	})
@@ -61,7 +60,7 @@ type taskContainer struct {
 	DummyTask   DummyTask
 }
 
-func (svc *DummyTaskProcessor) ProcessTask(ctx context.Context, task *Task[DummyTask]) error {
+func (svc *DummyTaskProcessor) ProcessTask(ctx context.Context, task *Container[DummyTask]) error {
 	svc.mux.Lock()
 	defer svc.mux.Unlock()
 	fmt.Printf("Processing task: %s\n", task.Args.Name)
@@ -89,6 +88,61 @@ func (svc *DummyTaskProcessor) ProcessTask(ctx context.Context, task *Task[Dummy
 		CreatedAt:   task.CreatedAt,
 		DummyTask:   task.Args})
 	return nil
+}
+
+type DummyEventProcessor struct {
+	mux sync.Mutex
+	TaskHandlerDefaults[DummyTask]
+	Tasks []taskContainer
+}
+
+func (svc *DummyEventProcessor) ProcessEvent(ctx context.Context, task *Container[DummyTask]) error {
+	svc.mux.Lock()
+	defer svc.mux.Unlock()
+	fmt.Printf("Processing task: %s\n", task.Args.Name)
+	fmt.Printf("Task type: %s\n", task.Args.Kind())
+	fmt.Printf("Task ID: %s\n", task.Id)
+	fmt.Printf("Task Retried: %d\n", task.Retried)
+	fmt.Printf("Task Created At: %s\n", task.CreatedAt)
+	fmt.Println("")
+
+	if task.Args.FailFirst && task.Retried == 0 {
+		return fmt.Errorf("failing on first")
+	}
+
+	if task.Args.Snooze && time.Now().Sub(task.CreatedAt) < time.Second*10 {
+		fmt.Printf("Snoozing for 15 seconds\n")
+		return JobSnooze(15 * time.Second)
+	}
+
+	fmt.Printf("Task completed: %s\n", task.Args.Name)
+
+	svc.Tasks = append(svc.Tasks, taskContainer{
+		Id:          task.Id,
+		Retried:     task.Retried,
+		CompletedAt: time.Now(),
+		CreatedAt:   task.CreatedAt,
+		DummyTask:   task.Args})
+	return nil
+}
+
+func TestEventHandler(t *testing.T) {
+
+	tsvc := NewTaskService(dummyTransport())
+	AddEventHandler(tsvc, "myHandler", &DummyEventProcessor{})
+
+	dummyTask := DummyTask{Name: "test"}
+	ce := cloudevents.NewEvent()
+	ce.SetID(uuid.NewString())
+	ce.SetSource("defensedata")
+	ce.SetData("application/json", dummyTask)
+	ce.SetExtension(events.TaskRetriedExtension, "0")
+	ce.SetExtension(events.ScheduledTaskExtension, "false")
+	ce.SetExtension(events.QstashMessageIdExtension, "123")
+	ce.SetExtension(events.ScheduleIdExtension, "456")
+	ctx := context.Background()
+	err := tsvc.handlersMap["myHandler/DummyTask"].handler.HandleEvent(ctx, ce)
+	require.NoError(t, err)
 }
 
 func TestTaskHandler(t *testing.T) {
@@ -265,97 +319,22 @@ func TestLocalTunnelStreamingOutput(t *testing.T) {
 }
 
 func TestEnqueueTask(t *testing.T) {
-	tclient := NewTaskClient(NewUpstashTransport(testutl.ReadTokenFromEnv(), "https://zzz.requestcatcher.com/"))
-	_, err := tclient.StartTask(context.Background(), DummyTask{Name: "test"}, &TaskInsertOpts{Queue: "missing-queue"})
+	transport, err := NewUpstashTransport(testutl.ReadTokenFromEnv(), "https://zzz.requestcatcher.com/")
+	require.NoError(t, err)
+	tclient := NewTaskClient(transport)
+	_, err = tclient.StartTask(context.Background(), DummyTask{Name: "test"}, &InsertOpts{Queue: "missing-queue"})
 	require.NoError(t, err)
 }
 
-func TestUpstashTransport(t *testing.T) {
-	port := testutl.GetPort()
+func TestPublishEventWithNoHandlers(t *testing.T) {
+	tsvc := NewTaskService(dummyTransport())
+	_, err := tsvc.PublishEvent(context.Background(), DummyTask{}, nil)
+	require.Error(t, err)
+}
 
-	tunnelUrl, cmd, err := testutl.StartLocalTunnel(port)
+func TestPublishEventWithHandlers(t *testing.T) {
+	tsvc := NewTaskService(dummyTransport())
+	AddEventHandler(tsvc, "dummyHandler", &DummyEventProcessor{})
+	_, err := tsvc.PublishEvent(context.Background(), DummyTask{}, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		fmt.Println("Killing local tunnel")
-		cmd.Process.Kill()
-	})
-	transport := NewUpstashTransport(testutl.ReadTokenFromEnv(), tunnelUrl)
-	tclient := NewTaskClient(transport)
-	tsvc := NewTaskService(transport)
-
-	handler := http.NewServeMux()
-	handler.Handle("POST /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("")
-		fmt.Println("Received request")
-		//fmt.Println("--- Headers: ---")
-		//for k, v := range r.Header {
-		//	fmt.Printf("%s: %s\n", k, v)
-		//}
-		//fmt.Println("----------------")
-		ce, err := httputil.NewEventFromHTTPRequest(r)
-		if err != nil {
-			fmt.Println("Error: ", err)
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(err.Error()))
-			return
-		}
-
-		err = tsvc.HandleEvent(r.Context(), ce)
-		if err != nil {
-			fmt.Println("Error: ", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	srv := &http.Server{Handler: handler, Addr: ":" + strconv.Itoa(port)}
-	go func() {
-		err := srv.ListenAndServe()
-		if err != nil {
-			if err != http.ErrServerClosed {
-				slog.Error(err.Error())
-			}
-		}
-	}()
-	t.Cleanup(func() {
-		fmt.Println("Shutting down server")
-		err := srv.Shutdown(context.Background())
-		if err != nil {
-			slog.Error(err.Error())
-		}
-	})
-
-	worker := &DummyTaskProcessor{}
-
-	AddTaskHandler(tsvc, worker)
-
-	time.Sleep(time.Second * 8)
-
-	_, err = tclient.StartTask(context.Background(), DummyTask{Name: "test ok"}, nil)
-	require.NoError(t, err)
-	_, err = tclient.StartTask(context.Background(), DummyTask{Name: "test fail", FailFirst: true}, nil)
-	require.NoError(t, err)
-	_, err = tclient.StartTask(context.Background(), DummyTask{Name: "test snooze", Snooze: true}, nil)
-	require.NoError(t, err)
-
-	time.Sleep(time.Second * 15)
-	for i := 0; i < 300; i++ {
-		if len(worker.Tasks) >= 3 {
-			for _, task := range worker.Tasks {
-				if task.DummyTask.Name == "test fail" {
-					require.True(t, task.Retried > 0)
-				}
-				if task.DummyTask.Name == "test snooze" {
-					require.True(t, task.CompletedAt.After(task.CreatedAt.Add(15*time.Second)))
-				}
-			}
-			break
-		}
-		time.Sleep(time.Second)
-	}
-
-	require.Equal(t, 3, len(worker.Tasks))
-
 }

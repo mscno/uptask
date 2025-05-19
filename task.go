@@ -14,21 +14,24 @@ type TaskArgs interface {
 	Kind() string
 }
 
-type Task[T any] struct {
+type Container[T any] struct {
 	Id              string
 	qstashMessageId string
 	scheduleId      string
 	CreatedAt       time.Time
-	MaxRetries      int
+	InsertOpts      InsertOpts
 	Retried         int
 	Scheduled       bool
 	Args            T
 }
 
 type AnyTask struct {
-	Id              string
-	CreatedAt       time.Time
-	MaxRetries      int
+	Id        string
+	CreatedAt time.Time
+	//MaxRetries      int
+	//ScheduledAt     time.Time
+	//Queue           string
+	//Tags            []string
 	Retried         int
 	Scheduled       bool
 	ScheduleId      string
@@ -36,9 +39,9 @@ type AnyTask struct {
 	Args            interface{}
 }
 
-func unmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
+func unmarshalTask[T any](ce cloudevents.Event) (*Container[T], error) {
 	// Create a new task with the event ID and time.
-	var task = Task[T]{
+	var task = Container[T]{
 		Id:        ce.ID(),
 		CreatedAt: ce.Time(),
 	}
@@ -70,15 +73,12 @@ func unmarshalTask[T any](ce cloudevents.Event) (*Task[T], error) {
 	}
 	task.Scheduled, _ = strconv.ParseBool(scheduled)
 
-	// Extract the task scheduled extension from the event and set it on the task.
-	if _, ok := ce.Extensions()[events.TaskMaxRetriesExtension]; ok {
-		var maxRetries string
-		err = ce.ExtensionAs(events.TaskMaxRetriesExtension, &maxRetries)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get task maxRetries extension: %w", err)
-		}
-		task.MaxRetries, _ = strconv.Atoi(maxRetries)
+	opts, err := insertInsertOptsFromEvent(ce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse insertOpts from event: %w", err)
 	}
+
+	task.InsertOpts = opts
 
 	err = events.Deserialize(ce, &task.Args)
 	if err != nil {

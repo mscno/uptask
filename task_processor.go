@@ -50,7 +50,7 @@ type TaskHandler[T TaskArgs] interface {
 	// its context is cancelled. A timeout of zero (the default) means the task
 	// will inherit the Service-level timeout. A timeout of -1 means the task's
 	// context will never time out.
-	Timeout(task *Task[T]) time.Duration
+	Timeout(task *Container[T]) time.Duration
 
 	// ProcessTask performs the task and returns an error if the task failed. The context
 	// will be configured with a timeout according to the task handler settings and may
@@ -63,7 +63,7 @@ type TaskHandler[T TaskArgs] interface {
 	// the service to respond to shutdown requests; there is no way to cancel a
 	// running task that does not respect context cancellation, other than
 	// terminating the process.
-	ProcessTask(ctx context.Context, task *Task[T]) error
+	ProcessTask(ctx context.Context, task *Container[T]) error
 }
 
 // TaskHandlerDefaults is an empty struct that can be embedded in your task handler
@@ -73,11 +73,11 @@ type TaskHandlerDefaults[T TaskArgs] struct{}
 // NextRetry returns an empty time.Time{} to avoid setting any task or
 // TaskHandler-specific overrides on the next retry time. This means that the
 // Service-level retry policy schedule will be used instead.
-func (w TaskHandlerDefaults[T]) NextRetry(*Task[T]) time.Time { return time.Time{} }
+func (w TaskHandlerDefaults[T]) NextRetry(*Container[T]) time.Time { return time.Time{} }
 
 // Timeout returns the task-specific timeout. Override this method to set a
 // task-specific timeout, otherwise the Service-level timeout will be applied.
-func (w TaskHandlerDefaults[T]) Timeout(*Task[T]) time.Duration { return time.Minute * 60 }
+func (w TaskHandlerDefaults[T]) Timeout(*Container[T]) time.Duration { return time.Minute * 60 }
 
 // AddTaskHandler registers a TaskHandler on the provided TaskService bundle. Each TaskHandler must
 // be registered so that the Service knows it should handle a specific kind of
@@ -109,26 +109,26 @@ func AddTaskHandler[T TaskArgs](service *TaskService, handler TaskHandler[T]) {
 //	taskservice.AddTaskHandlerSafely[SortArgs](service, &SortTaskHandler{}).
 func AddTaskHandlerSafely[T TaskArgs](service *TaskService, handler TaskHandler[T]) error {
 	var taskArgs T
-	return service.add(taskArgs, &taskUnitFactoryWrapper[T]{tasker: handler})
+	return service.addTask(taskArgs, "", &taskUnitFactoryWrapper[T]{tasker: handler})
 }
 
 type tasker[T TaskArgs] interface {
-	Timeout(task *Task[T]) time.Duration
-	ProcessTask(ctx context.Context, job *Task[T]) error
+	Timeout(task *Container[T]) time.Duration
+	ProcessTask(ctx context.Context, job *Container[T]) error
 }
 
 // processTaskFunc implements TaskArgs and is used to wrap a function given to ProcessTaskFunc.
 type processTaskFunc[T TaskArgs] struct {
 	TaskHandlerDefaults[T]
 	kind string
-	f    func(context.Context, *Task[T]) error
+	f    func(context.Context, *Container[T]) error
 }
 
 func (tf *processTaskFunc[T]) Kind() string {
 	return tf.kind
 }
 
-func (tf *processTaskFunc[T]) ProcessTask(ctx context.Context, task *Task[T]) error {
+func (tf *processTaskFunc[T]) ProcessTask(ctx context.Context, task *Container[T]) error {
 	return tf.f(ctx, task)
 }
 
@@ -141,7 +141,7 @@ func (tf *processTaskFunc[T]) ProcessTask(ctx context.Context, task *Task[T]) er
 //		fmt.Printf("Message: %s", task.Args.Message)
 //		return nil
 //	}))
-func ProcessTaskFunc[T TaskArgs](f func(context.Context, *Task[T]) error) TaskHandler[T] {
+func ProcessTaskFunc[T TaskArgs](f func(context.Context, *Container[T]) error) TaskHandler[T] {
 	return &processTaskFunc[T]{f: f, kind: (*new(T)).Kind()}
 }
 
@@ -157,7 +157,7 @@ func (w *taskUnitFactoryWrapper[T]) MakeUnit(ce cloudevents.Event) taskUnit {
 // wrapperTaskUnit implements taskUnit for a task and Worker.
 type wrapperTaskUnit[T TaskArgs] struct {
 	ce     cloudevents.Event
-	task   *Task[T] // not set until after UnmarshalJob is invoked
+	task   *Container[T] // not set until after UnmarshalJob is invoked
 	tasker tasker[T]
 }
 
@@ -166,11 +166,11 @@ func (w *wrapperTaskUnit[T]) ProcessTask(ctx context.Context) error {
 	return executeWithTimeout(ctx, w.tasker, w.task)
 }
 
-func (w *wrapperTaskUnit[T]) ExtractJob() *Task[T] {
+func (w *wrapperTaskUnit[T]) ExtractJob() *Container[T] {
 	return w.task
 }
 
-func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T], task *Task[T]) error {
+func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T], task *Container[T]) error {
 	timeout := handler.Timeout(task)
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -200,13 +200,8 @@ func executeWithTimeout[T TaskArgs](ctx context.Context, handler TaskHandler[T],
 	}
 }
 
-func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) {
-	insertOpts := new(TaskInsertOpts)
-	err := insertOpts.FromCloudEvent(w.ce)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to extract task insert options: %w", err)
-	}
-
+func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *InsertOpts, error) {
+	var err error
 	w.task, err = unmarshalTask[T](w.ce)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal task: %w", err)
@@ -214,13 +209,12 @@ func (w *wrapperTaskUnit[T]) UnmarshalTask() (*AnyTask, *TaskInsertOpts, error) 
 	anytask := &AnyTask{
 		Id:              w.task.Id,
 		CreatedAt:       w.task.CreatedAt,
-		MaxRetries:      w.task.MaxRetries,
 		Retried:         w.task.Retried,
-		Args:            w.task.Args,
 		Scheduled:       w.task.Scheduled,
-		QstashMessageId: w.task.qstashMessageId,
 		ScheduleId:      w.task.scheduleId,
+		QstashMessageId: w.task.qstashMessageId,
+		Args:            w.task.Args,
 	}
 
-	return anytask, insertOpts, nil
+	return anytask, &w.task.InsertOpts, nil
 }

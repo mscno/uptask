@@ -6,8 +6,10 @@ import (
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/samber/oops"
+	"golang.org/x/sync/errgroup"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,14 +28,16 @@ type Logger interface {
 }
 
 type TaskService struct {
-	*TaskClient
-	log           Logger
-	mux           sync.Mutex
-	handlersAdded bool
-	store         TaskStore
-	storeEnabled  bool
-	middlewares   []Middleware
-	handlersMap   map[string]handlerInfo // task kind -> handler info
+	addSystemHandlers bool
+	client            *TaskClient
+	log               Logger
+	mux               sync.Mutex
+	handlersAdded     bool
+	store             TaskStore
+	storeEnabled      bool
+	middlewares       []Middleware
+	handlersMap       map[string]handlerInfo // task kind -> handler info
+
 }
 
 type ServiceOption func(*TaskService)
@@ -75,7 +79,7 @@ func NewTaskService(transport Transport, opts ...ServiceOption) *TaskService {
 	if svc.log != nil {
 		clientsopts = append(clientsopts, WithClientLogger(svc.log))
 	}
-	svc.TaskClient = NewTaskClient(transport, clientsopts...)
+	svc.client = NewTaskClient(transport, clientsopts...)
 
 	return svc
 }
@@ -87,20 +91,24 @@ type handlerInfo struct {
 	handler  HandlerFunc
 }
 
-func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) error {
+func (w *TaskService) addTask(taskArgs TaskArgs, handlerName string, taskUnitFactory taskUnitFactory) error {
 	kind := taskArgs.Kind()
-	w.mux.Lock()
-	defer w.mux.Unlock()
-
-	if _, ok := w.handlersMap[kind]; ok {
-		return fmt.Errorf("handler for kind %q is already registered", kind)
-	}
-
 	if kind == "" {
 		return fmt.Errorf("taskKind cannot be empty")
 	}
 	if taskUnitFactory == nil {
 		return fmt.Errorf("taskUnitFactory cannot be nil")
+	}
+	if !w.addSystemHandlers {
+		w.addSystemHandlers = true
+		AddTaskHandler[EventFanoutArgs](w, &EventFanoutWorker{c: w.client})
+	}
+
+	w.mux.Lock()
+	defer w.mux.Unlock()
+
+	if _, ok := w.handlersMap[kind]; ok {
+		return fmt.Errorf("handler for kind %q is already registered", kind)
 	}
 
 	// Create the base handler for this task type
@@ -181,7 +189,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 	}
 
 	// Apply snooze middleware to the base handler
-	snoozeMw := snoozeMw(w.transport, w.log, w.storeEnabled, w.store)
+	snoozeMw := snoozeMw(w.client.transport, w.log, w.storeEnabled, w.store)
 	baseHandler = snoozeMw(baseHandler)
 
 	// Apply all middleware to the base handler
@@ -201,7 +209,7 @@ func (w *TaskService) add(taskArgs TaskArgs, taskUnitFactory taskUnitFactory) er
 	return nil
 }
 
-func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err error, taskErr TaskError, opts *TaskInsertOpts, retries int) error {
+func (w *TaskService) handleTaskError(ctx context.Context, taskID string, err error, taskErr TaskError, opts *InsertOpts, retries int) error {
 	//slog.Error("handleTaskError", "taskID", taskID, "err", err, "taskErr", taskErr, "attempt", attempt, "opts", opts)
 	var retryErr *jobSnoozeError
 	if errors.As(err, &retryErr) {
@@ -242,12 +250,106 @@ func (t *TaskService) Use(middlewares ...Middleware) {
 // Use the top-level AddTaskHandler function combined with a TaskService to register a
 // task handler.
 
+func (t *TaskService) UseSend(middlewares ...Middleware) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	if t.handlersAdded {
+		panic("cannot add middleware after handlers are added")
+	}
+	t.client.Use(middlewares...)
+}
+
+// TaskService is a list of available task handlers. A TaskHandler must be registered for
+// each type of Task to be handled.
+//
+// Use the top-level AddTaskHandler function combined with a TaskService to register a
+// task handler.
+
 // HandleEvent processes a CloudEvent with all registered middleware
 func (w *TaskService) HandleEvent(ctx context.Context, ce cloudevents.Event) error {
 	w.log.Debug("handling event", "type", ce.Type(), "source", ce.Source(), "id", ce.ID())
-	handlerInfo, ok := w.handlersMap[ce.Type()]
+	h, ok := w.handlersMap[ce.Type()]
 	if !ok {
 		return fmt.Errorf("no handler registered for task type: %s", ce.Type())
 	}
-	return handlerInfo.handler(ctx, ce)
+	return h.handler(ctx, ce)
+}
+
+type EventFanoutArgs struct {
+	Handlers  []string
+	EventType string
+	Payload   any
+}
+
+func (e EventFanoutArgs) Kind() string {
+	return "_UptaskFanoutTask"
+}
+
+type EventFanoutWorker struct {
+	c *TaskClient
+	TaskHandlerDefaults[EventFanoutArgs]
+}
+
+type TaskEvent struct {
+	PayloadData any
+	EventType   string
+}
+
+func (e TaskEvent) Kind() string {
+	return e.EventType
+}
+
+func (e TaskEvent) Payload() any {
+	return e.PayloadData
+}
+
+type TaskEventGen[T Event] struct {
+	Event       T
+	HandlerName string
+}
+
+func (e TaskEventGen[T]) Kind() string {
+	return fmt.Sprintf("%s/%s", e.HandlerName, e.Event.Kind())
+}
+
+func (w *EventFanoutWorker) ProcessTask(ctx context.Context, task *Container[EventFanoutArgs]) error {
+	var errGroup errgroup.Group
+	for _, handlerKind := range task.Args.Handlers {
+		errGroup.Go(func() error {
+			eventTask := TaskEvent{task.Args.Payload, handlerKind}
+			_, err := w.c.StartTask(ctx, eventTask, &InsertOpts{
+				MaxRetries:  task.InsertOpts.MaxRetries,
+				Queue:       task.InsertOpts.Queue,
+				ScheduledAt: task.InsertOpts.ScheduledAt,
+				Tags:        task.InsertOpts.Tags,
+			})
+			return err
+		})
+	}
+
+	return errGroup.Wait()
+}
+
+func (c *TaskService) PublishEvent(ctx context.Context, event Event, opts *InsertOpts) (string, error) {
+	var handlers []string
+	for k, _ := range c.handlersMap {
+		parts := strings.SplitN(k, "/", 2)
+		if len(parts) > 1 {
+			if event.Kind() == parts[1] {
+				handlers = append(handlers, k)
+			}
+		}
+	}
+	if handlers == nil {
+		return "", fmt.Errorf("no handler registered for event: %s", event.Kind())
+	}
+	return c.client.StartTask(ctx, EventFanoutArgs{
+		Handlers:  handlers,
+		EventType: event.Kind(),
+		Payload:   event,
+	}, opts)
+}
+
+func (c *TaskService) StartTask(ctx context.Context, args TaskArgs, opts *InsertOpts) (string, error) {
+	return c.client.StartTask(ctx, args, opts)
 }

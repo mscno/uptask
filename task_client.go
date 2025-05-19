@@ -55,9 +55,9 @@ func (t *TaskClient) Use(middlewares ...Middleware) {
 	t.middlewares = append(t.middlewares, middlewares...)
 }
 
-func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskInsertOpts) (string, error) {
+func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *InsertOpts) (string, error) {
 	if opts == nil {
-		opts = &TaskInsertOpts{MaxRetries: 3}
+		opts = &InsertOpts{}
 	}
 	if opts.MaxRetries == 0 {
 		opts.MaxRetries = 3
@@ -95,7 +95,7 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 		}
 	}
 
-	var handler HandlerFunc = func(ctx context.Context, event cloudevents.Event) error {
+	var publishFunc HandlerFunc = func(ctx context.Context, event cloudevents.Event) error {
 		err = c.transport.Send(ctx, ce, opts)
 		if err != nil {
 			if c.storeEnabled {
@@ -113,10 +113,10 @@ func (c *TaskClient) StartTask(ctx context.Context, args TaskArgs, opts *TaskIns
 	}
 
 	for i := len(c.middlewares) - 1; i >= 0; i-- {
-		handler = c.middlewares[i](handler)
+		publishFunc = c.middlewares[i](publishFunc)
 	}
 
-	err = handler(ctx, ce)
+	err = publishFunc(ctx, ce)
 	if err != nil {
 		return "", fmt.Errorf("failed to send task: %w", err)
 	}

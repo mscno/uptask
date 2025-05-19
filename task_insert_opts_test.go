@@ -15,7 +15,7 @@ func TestInsertOpts(t *testing.T) {
 	ce.SetExtension(events.TaskQueueExtension, "default")
 	ce.SetExtension(events.TaskNotBeforeExtension, "1615766400")
 
-	var opts TaskInsertOpts
+	var opts InsertOpts
 	err := opts.FromCloudEvent(ce)
 	require.NoError(t, err)
 	require.Equal(t, 3, opts.MaxRetries)
